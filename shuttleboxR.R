@@ -7,8 +7,9 @@
 # reset R
 rm(list=ls())
 
-# Set data location
-setwd("C:/Users/Pieter/Documents/ShuttleboxR")
+# renv:: restore checks whether the packages you are using are the same versions as in the script
+# if collaborators update a library and then edit the script, renv::restore will pick up on that
+renv::restore()
 
 # Confirm that R is looking in the right place
 getwd()
@@ -51,10 +52,6 @@ file_prepare <- function(data) {
 }
 
 data <- file_prepare(data)
-library(tidyverse)
-data1<-data%>%
-  dplyr::mutate(Clock_time_hours = time(Clock_time_hours))%>%
-  dplyr::filter(Clock_time_hours>as.POSIXct("16:00:00"))
 
 ##########################################################################################
 ##### Function to calculate body core temperature if not already done in Shuttlesoft #####
@@ -197,7 +194,7 @@ calc_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes =
 }
 
 # Example usage
-dist <- calc_distance(data, exclude_start_minutes = 240, exclude_end_minutes = 5)
+dist <- calc_distance(data, 240)
 
 ######################################################
 ###### Function to calculate shuttling frequency #####
@@ -390,7 +387,7 @@ plot_cumulative_distance <- function(data, exclude_start_minutes = 0, exclude_en
 }
 
 # Example usage
-plot_cumulative_distance(data, 0, 5)
+plot_cumulative_distance(data, 240, 5)
 
 data1<-as_tibble(data)
 data1%>%
