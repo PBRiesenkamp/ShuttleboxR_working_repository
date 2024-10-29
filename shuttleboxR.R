@@ -14,26 +14,54 @@ renv::restore()
 # Confirm that R is looking in the right place
 getwd()
 
-# Open data file and commit it to memory, while skipping the first 5 rows
-data<- read.csv("Fish_7_13_2.csv", skip = 5) # Change file to reflect the file name for a trial with an individual fish
 proj_data <- read.csv("project_database.csv") # This should be a summary data file with data from numerous fish (e.g. all fish in a study)
 
-####################################################################################
-##### Function to prepare data file for further processing and detect shuttles #####
-####################################################################################
+##### Function to prepare data file for further processing and detect shuttles ####
 
-file_prepare <- function(data) {
+file_prepare <- function(directory, trial_start) {
   
+  # Load .txt data file that shuttlesoft produces into R
+  # Don't load headers, because the additional info at the top of the .txt file will make a confusing dataframe
   # Rename data columns
-  names(data) <- c("Clock_time_hours", "Side_presence", "Body_core_temp", "Pref_temp_loligo", "INCR_side_temp",
-                   "DECR_side_temp", "x_pos", "y_pos", "U_swim", "Dist_moved", "Time_in_INCR", "Time_in_DECR",
-                   "Side_temp_diff", "Hyst_side_temp_diff", "INCR_side_set", "Hyst_INCR_side_set", "DECR_side_set",
-                   "Hyst_DECR_side_set", "k", "Max_temp_loligo", "Min_temp", "Temp_change_rate", "Avoid_up_mean_loligo",
-                   "Unknown_1_loligo", "Unknown_2_loligo", "Unknown_3_loligo")
+  data <- read.delim(directory,
+                     header = F,
+                     col.names = (c("Clock_time_hours", "Side_presence", "Body_core_temp", "Pref_temp_loligo", "INCR_side_temp",
+                                    "DECR_side_temp", "x_pos", "y_pos", "U_swim", "Dist_moved", "Time_in_INCR", "Time_in_DECR",
+                                    "Side_temp_diff", "Hyst_side_temp_diff", "INCR_side_set", "Hyst_INCR_side_set", "DECR_side_set",
+                                    "Hyst_DECR_side_set", "k", "Max_temp_loligo", "Min_temp", "Temp_change_rate", "Avoid_up_mean_loligo",
+                                    "Unknown_1_loligo", "Unknown_2_loligo", "Unknown_3_loligo")),
+                     
+                     na.strings = c("NaN", "")) 
+  
+  # Extract notes, and the file created info from the datafrmae
+  notes <- data[3,2]
+  filecreated <- as.POSIXct(data[1,2], format = "%d/%m/%Y; %H:%M")
+  
+  # Remove the additional info and reset rownames
+  data<-data[-c(1:6), ]
+  rownames(data)<-NULL
+  
   
   # Add time in seconds and hours assuming a sampling frequency of 1 Hz
   data$Time_sec <- seq(0, by = 1, length.out = nrow(data))
   data$Time_h <- data$Time_sec / 3600
+  
+  # Add the date off the trial by extracting it from the filecreated object
+  data$date <- as.Date(filecreated)
+  
+  # Make sure the date is correct in case the experiment goes on past midnight
+    # Extract the second when the experiment passed midnight
+    # Make all observations past that date the next day
+  midnight_observation <- data$Time_sec[data$Clock_time_hours == "00:00:00"]
+  data$date<-format(as.Date(ifelse(data$Time_sec>=midnight_observation, data$date+1, data$date)), "%d/%m/%Y")
+  data$datetime<-as.POSIXct(paste(data$date, data$Clock_time_hours), format = "%d/%m/%Y %H:%M:%S")
+  
+  # Add a column that tells you whether the system is in static or dynamic
+  data$dyn_stat <- ifelse(is.na(data$Side_temp_diff), "static", "dynamic")
+  
+  # Add the phase of the experiment (e.g. acclimation and trial)
+  trial_start_second<-data$Time_sec[data$Clock_time_hours == trial_start]
+  data$trial_phase<-ifelse(data$Time_sec>=trial_start_second, "trial", "acclimation")
   
   # Detect a shuttle (chamber side change) in new column
   data$shuttle <- 0
@@ -51,11 +79,10 @@ file_prepare <- function(data) {
   return(data)
 }
 
-data <- file_prepare(data)
+data <- file_prepare(directory = "Sys2_20240616_cunipinna_xx.txt", trial_start = "08:00:00")
 
-##########################################################################################
-##### Function to calculate body core temperature if not already done in Shuttlesoft #####
-##########################################################################################
+
+#### Function to calculate body core temperature if not already done in Shuttlesoft ####
 
 calc_core_body_temp <- function(data, BM, constant, k) {
   # Ensure necessary columns exist
@@ -63,6 +90,11 @@ calc_core_body_temp <- function(data, BM, constant, k) {
     stop("The dataset does not contain one or more necessary columns: 'Body_core_temp', 'shuttle'.")
   }
   
+  #Ensure necessary columns are in the right format
+  if (!all(is.numeric(c(data$Body_core_temp, data$shuttle)))){
+    stop("One or more necessary variables are not in the right format")
+  }
+
   # Initialize the Body_core_temp column
   data$Body_core_temp <- data$Body_core_temp
   
@@ -84,12 +116,13 @@ BM <- 30  # Example body mass
 constant <- 3.69  # Example constant
 k <- -0.574  # Example k value
 
+data$Body_core_temp<-as.character(data$Body_core_temp)
+
 # Calculate core body temperature
 data <- calc_core_body_temp(data, BM, constant, k)
 
-###########################################################################################################
-##### Function to calculate Tpref using either the mean or median of all body core temperature values #####
-###########################################################################################################
+
+#### Function to calculate Tpref using either the mean or median of all body core temperature values ####
 
 calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start_minutes = 0, exclude_end_minutes = 0) {
   method <- match.arg(method)
@@ -121,9 +154,7 @@ calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start
 # Example usage
 Tpref <- calc_Tpref(data, method = "median", exclude_start_minutes = 240, exclude_end_minutes = 5)
 
-########################################################################
-##### Function to calculate upper and lower avoidance temperatures #####
-########################################################################
+#### Function to calculate upper and lower avoidance temperatures ####
 
 calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure the percentiles are valid
@@ -153,9 +184,7 @@ calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes
 # Calculate Tavoid values
 Tavoid_values <- calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 240, exclude_end_minutes = 5)
 
-#####################################################
-#### Function to calculate total distance moved #####
-#####################################################
+#### Function to calculate total distance moved ####
 
 calc_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure the Distance moved column exists
@@ -196,9 +225,7 @@ calc_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes =
 # Example usage
 dist <- calc_distance(data, 240)
 
-######################################################
-###### Function to calculate shuttling frequency #####
-######################################################
+#### Function to calculate shuttling frequency ####
 
 calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure the 'shuttle' and 'Time_sec' columns exist
@@ -226,9 +253,7 @@ calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_en
 # Example usage
 cal_shut_freq <- calc_shuttling_frequency(data, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
-#################################################################
-###### Function to calculate occupancy time in each chamber #####
-#################################################################
+#### Function to calculate occupancy time in each chamber ####
 
 calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure the 'Side_presence' and 'Time_sec' columns exist
@@ -258,9 +283,7 @@ calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_min
 # Example usage
 occ_time <- calc_occupancy_time(data, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
-##########################################################################################
-##### Function to plot a histogram of time spent at different core body temperatures #####
-##########################################################################################
+#### Function to plot a histogram of time spent at different core body temperatures ####
 
 library(ggplot2)
 
@@ -310,9 +333,7 @@ plot_body_core_temp_histogram <- function(data, bin_size, exclude_start_minutes 
 Tpref_peak <- plot_body_core_temp_histogram(data, bin_size = 0.1, exclude_start_minutes = 240, exclude_end_minutes = 5)
 print(paste("Peak Tpref:", Tpref_peak))
 
-####################################################################################################
-##### Function to calculate variance in core body temperature experienced throughout the trial #####
-####################################################################################################
+#### Function to calculate variance in core body temperature experienced throughout the trial #####
 
 calc_variance <- function(data, variance_type = c("std_error", "std_deviation", "coeff_variation"), exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure the body core temperature column exists
@@ -353,9 +374,7 @@ print(paste("Standard Error:", variance_se))
 print(paste("Standard Deviation:", variance_sd))
 print(paste("Coefficient of Variation:", variance_cv))
 
-###########################################################################
-##### Function to plot cumulative changes in distance moved over time #####
-###########################################################################
+#### Function to plot cumulative changes in distance moved over time ####
 
 plot_cumulative_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   if (!("Time_sec" %in% colnames(data) && "Dist_moved" %in% colnames(data))) {
@@ -373,7 +392,7 @@ plot_cumulative_distance <- function(data, exclude_start_minutes = 0, exclude_en
   # Convert time in seconds to minutes
   data$Time_min <- data$Time_sec / 60
   #substract first distance value to reset cumulative distance to 0
-  data$Dist_moved<-data$Dist_moved-first(data$Dist_moved)
+  data$Dist_moved<-data$Dist_moved-data$Dist_moved[[1]]
   
   # Plot cumulative distance
   plot <- ggplot(data, aes(x = Time_min, y = (Dist_moved))) +
@@ -389,15 +408,7 @@ plot_cumulative_distance <- function(data, exclude_start_minutes = 0, exclude_en
 # Example usage
 plot_cumulative_distance(data, 240, 5)
 
-data1<-as_tibble(data)
-data1%>%
-  filter(Time_sec>(240*60))%>%
-  mutate(Dist_moved = Dist_moved - first(Dist_moved))%>%
-  summarise(max(Dist_moved))
-
-##########################################################
-##### Function to calculate minimum gravitation time #####
-##########################################################
+#### Function to calculate minimum gravitation time ####
 
 calc_min_gravitation <- function(start_temp, target_temp, rate_of_change) {
   # Calculate the change in temperature
@@ -419,9 +430,7 @@ rate_of_change <- 5  # Rate of temperature change in °C/h
 
 min_grav_time <- calc_min_gravitation(start_temp, target_temp, rate_of_change)
 
-################################################################################
-##### Function to plot time spent at extreme temperatures, near set limits #####
-################################################################################
+#### Function to plot time spent at extreme temperatures, near set limits ####
 
 calc_extremes <- function(data, upper_limit, lower_limit, threshold = 0, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure necessary columns exist
@@ -437,7 +446,7 @@ calc_extremes <- function(data, upper_limit, lower_limit, threshold = 0, exclude
   end_time <- max(data$Time_sec) - (exclude_end_minutes * 60)
   data <- data[data$Time_sec > start_time & data$Time_sec < end_time, ]
   
-  # Convert time in seconds to minutes
+  # Convert time in secxonds to minutes
   data$Time_min <- data$Time_sec / 60
   
   # Determine time spent near upper and lower extreme temperatures with the threshold
@@ -459,9 +468,7 @@ calc_extremes <- function(data, upper_limit, lower_limit, threshold = 0, exclude
 # Example usage
 extreme_time_percent <- calc_extremes(data, upper_limit = 25, lower_limit = 5, threshold = 4, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
-#########################################################
-##### Function to plot histogram of movement speeds #####
-#########################################################
+#### Function to plot histogram of movement speeds ####
 
 library(ggplot2)
 
@@ -494,9 +501,7 @@ plot_speed_histogram <- function(data, binwidth = 0.1, exclude_start_minutes = 0
 # Example usage
 plot_speed_histogram(data, binwidth = 1, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
-#########################################################################
-##### Function to plot movement speed against body core temperature #####
-#########################################################################
+#### Function to plot movement speed against body core temperature ####
 
 plot_speed_vs_core_temp <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure necessary columns exist
@@ -535,9 +540,7 @@ plot_speed_vs_core_temp <- function(data, exclude_start_minutes = 0, exclude_end
 speed_temp_plot <- plot_speed_vs_core_temp(data, exclude_start_minutes = 240)
 speed_temp_plot
 
-##################################################################################
-##### Function to plot temperatures in each side of the shuttlebox over time #####
-##################################################################################
+#### Function to plot temperatures in each side of the shuttlebox over time ####
 
 library(ggplot2)
 
@@ -569,11 +572,9 @@ plot_temperature_gradient <- function(data, exclude_start_minutes = 0, exclude_e
 
 # Example usage
 # Assuming 'data' contains temperature columns for both chambers
-plot_temperature_gradient(data, 240, 0)
+plot_temperature_gradient(data, 0, 0)
 
-############################################################################################################################################################
-##### Function to plot core body temperature, Tpref, avoidance temperatures, segmented regression of changes in body core temperature during the trial #####
-############################################################################################################################################################
+#### Function to plot core body temperature, Tpref, avoidance temperatures, segmented regression of changes in body core temperature during the trial #####
 
 library(ggplot2)
 library(segmented)
@@ -621,14 +622,7 @@ plot_temp_segmented <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude
 # Example usage
 plot_temp_segmented(data, Tpref = Tpref, Tavoid_lower, Tavoid_upper, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
-data%>%
-  ggplot(aes(x= Time_h, y=Body_core_temp))+
-  geom_line()+
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2))
-
-#############################################################################################################################################################################
-##### Function to plot changes in core body temperature over time, as well as Tpref, and upper and lower avoidance temperatures, but WITHOUT segmented regression lines #####
-#############################################################################################################################################################################
+#### Function to plot changes in core body temperature over time, as well as Tpref, and upper and lower avoidance temperatures, but WITHOUT segmented regression lines #####
 
 plot_temp <- function(data, Tpref, Tavoid_low, Tavoid_up, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure necessary columns exist
@@ -661,9 +655,7 @@ plot_temp <- function(data, Tpref, Tavoid_low, Tavoid_up, exclude_start_minutes 
 # Example usage
 plot_temp(data, Tpref, Tavoid_low, Tavoid_up, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
-###########################################################
-##### Function to calculate actual gravitation time #####
-###########################################################
+##### Function to calculate actual gravitation time ####
 
 library(segmented)
 
@@ -703,9 +695,7 @@ calc_act_gravitation <- function(data, exclude_start_minutes = 0, exclude_end_mi
 # Calculate gravitation time
 act_grav_time <- calc_act_gravitation(data)
 
-######################################################################################
-##### Function to calculate and plot interval means for shuttling rate over time #####
-######################################################################################
+##### Function to calculate and plot interval means for shuttling rate over time ####
 
 library(ggplot2)
 library(dplyr)
@@ -753,9 +743,7 @@ shuttling_aggregated <- function(data, interval_minutes = 10, exclude_start_minu
 # Example usage
 shuttling_rate <- shuttling_aggregated(data, interval_minutes = 60, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
-#############################################################################
-##### Function to calculate and plot interval means for speed over time #####
-#############################################################################
+##### Function to calculate and plot interval means for speed over time ####
 
 library(ggplot2)
 library(dplyr)
@@ -803,9 +791,7 @@ speed_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes 
 # Example usage
 movement_speed <- speed_aggregated(data, interval_minutes = 60, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
-#############################################################################################
-##### Function to calculate and plot interval means for body core temperature over time #####
-#############################################################################################
+##### Function to calculate and plot interval means for body core temperature over time ####
 
 library(ggplot2)
 library(dplyr)
@@ -853,9 +839,7 @@ Tcore_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes 
 # Example usage
 Tcore_agg <- Tcore_aggregated(data, interval_minutes = 60, exclude_start_minutes = 10, exclude_end_minutes = 5)
 
-#########################################################################################################################
-##### Function to calculate interval means for speed, shuttling rate, and Tcore, then produces a correlation matrix #####
-#########################################################################################################################
+##### Function to calculate interval means for speed, shuttling rate, and Tcore, then produces a correlation matrix ####
 
 library(ggplot2)
 library(dplyr)
@@ -931,9 +915,7 @@ correlation_matrix <- results$correlation_matrix
 plots <- results$plots
 
 results
-##################################################################################################################
-##### Function to plot a 3D animation of fish movements at selected time intervals, with time as a dimension #####
-##################################################################################################################
+##### Function to plot a 3D animation of fish movements at selected time intervals, with time as a dimension ####
 
 library(rgl)
 
@@ -967,11 +949,9 @@ animate_movements <- function(data, exclude_start_minutes = 0, exclude_end_minut
 }
 
 # Example usage
-animate_movements(data, exclude_start_minutes = 900, exclude_end_minutes = 5)
+# animate_movements(data, exclude_start_minutes = 900, exclude_end_minutes = 5)
 
-##########################################################################
 ##### Function to produce a heat map of fish locations over the trial ####
-##########################################################################
 
 library(ggplot2)
 
@@ -1006,9 +986,7 @@ plot_heatmap <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 
 heatmap_plot <- plot_heatmap(data, exclude_start_minutes = 240, exclude_end_minutes = 0)
 print(heatmap_plot)
 
-#######################################################################################################################
-##### Function to visualise links between shuttling and activity across individuals in the entire project dataset #####
-#######################################################################################################################
+##### Function to visualise links between shuttling and activity across individuals in the entire project dataset ####
 
 library(ggplot2)
 
@@ -1033,9 +1011,7 @@ plot_distance_vs_shuttles <- function(proj_data) {
 # Example usage
 plot_distance_vs_shuttles(proj_data)
 
-#################################################################################################################################################
-##### Function to visualise links between time near system temperature limits and activity across individuals in the entire project dataset #####
-#################################################################################################################################################
+##### Function to visualise links between time near system temperature limits and activity across individuals in the entire project dataset ####
 
 library(ggplot2)
 
@@ -1060,9 +1036,8 @@ plot_limits_vs_distance <- function(proj_data) {
 # Example usage
 plot_limits_vs_distance(proj_data)
 
-#################################################################################################################################################
-##### Function to visualise links between time near system temperature limits and shuttles across individuals in the entire project dataset #####
-#################################################################################################################################################
+
+##### Function to visualise links between time near system temperature limits and shuttles across individuals in the entire project dataset ####
 
 library(ggplot2)
 
@@ -1087,9 +1062,7 @@ plot_limits_vs_shuttles <- function(proj_data) {
 # Example usage
 plot_limits_vs_shuttles(proj_data)
 
-#####################################################################################################################
-##### Function to perform PCA with shuttles, distance moved, and time near limits, then plot PC scores vs Tpref #####
-#####################################################################################################################
+##### Function to perform PCA with shuttles, distance moved, and time near limits, then plot PC scores vs Tpref ####
 
 library(ggplot2)
 library(dplyr)
@@ -1142,9 +1115,7 @@ scores <- results$scores
 loadings <- results$loadings
 
 loadings
-##########################################################################################################
-##### Function to create frequency distributions for key measures across individuals in the data set #####
-##########################################################################################################
+##### Function to create frequency distributions for key measures across individuals in the data set ####
 
 library(ggplot2)
 library(gridExtra)
@@ -1195,4 +1166,88 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
 
 # Example usage
 multipanel_plot <- plot_histograms(proj_data)
+
+
+#### COMPILE PROJ_DATA FILE ####
+
+# CONTENTS OF EXTERNAL ADDITIONAL DATA FILE
+  # trial start
+  # body mass
+  # k value
+  # constant (for body core temp)
+
+# AIM
+  # load all .txt files simultaneously
+  # logical operater to filter for trial phase only
+  # calculate all variables for a text file, and compile into vector
+  # combine values for each .txt file into
+
+# NECESSARY ITEMS
+  # directory with .txt files
+  # functions to calculate every variable
+  # overall (external) data file containing data that is not in the .txt files (mass, trial start, etc.)
+
+# VARIABLES AND ACCOMPANYING FUNCTIONS
+  # ID - from file name 
+  # total_length - external data
+  # gravitation time - calc_act_gravitation
+  # mass - external data
+  # distance travelled - calc_distance
+  # number of shuttles - file_prepare (so not necessary)
+  # Tpref - calc_Tpref
+  # Tavoid - calc_Tavoid
+  # pref range - ?
+  # time near limits - 
+  # body core temp - calc_core_body_temp()
+ 
+  # 
+
+# PROBLEMS
+
+compile_project_data <- function(directory = getwd()){
+  txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
+  return(txt_files)
+  
+  # Add external missing data to
+  
+  # # Ensure necessary columns exist
+  # if (!all(c("Body_core_temp", "shuttle") %in% colnames(data))) {
+  #   stop("The dataset does not contain one or more necessary columns: 'Body_core_temp', 'shuttle'.")
+  # }
+  
+  lapply()
+}
+
+proj_data<-compile_project_data()
+
+# ID 
+
+# total_length (trial length in hours)
+max(Time_h)
+
+# mass (fish mass)
+  #enter
+
+# grav_time (gravitation time)
+calc_act_gravitation()
+
+# distance (distance travelled)
+
+# shuttles (number of shuttles)
+
+# Tpref (preferred temperature)
+
+# Tavoid_lower (lower avoidance temperature)
+
+# Tavoid_upper (upper avoidance temperature)
+
+# pref_range (???)
+
+# time_near_max (time near upper limit)
+
+# time_near_min (time near lower limit)
+
+# time_near_limits
+
+# study_ID
 
