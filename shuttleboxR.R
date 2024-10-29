@@ -16,14 +16,17 @@ getwd()
 
 proj_data <- read.csv("project_database.csv") # This should be a summary data file with data from numerous fish (e.g. all fish in a study)
 
+additional_data<-read.csv("additional_data.csv")
+
 ##### Function to prepare data file for further processing and detect shuttles ####
 
-file_prepare <- function(directory, trial_start) {
+file_prepare <- function(file, additional_data) {
   
   # Load .txt data file that shuttlesoft produces into R
   # Don't load headers, because the additional info at the top of the .txt file will make a confusing dataframe
   # Rename data columns
-  data <- read.delim(directory,
+  
+  data <- read.delim(file,
                      header = F,
                      col.names = (c("Clock_time_hours", "Side_presence", "Body_core_temp", "Pref_temp_loligo", "INCR_side_temp",
                                     "DECR_side_temp", "x_pos", "y_pos", "U_swim", "Dist_moved", "Time_in_INCR", "Time_in_DECR",
@@ -31,7 +34,17 @@ file_prepare <- function(directory, trial_start) {
                                     "Hyst_DECR_side_set", "k", "Max_temp_loligo", "Min_temp", "Temp_change_rate", "Avoid_up_mean_loligo",
                                     "Unknown_1_loligo", "Unknown_2_loligo", "Unknown_3_loligo")),
                      
-                     na.strings = c("NaN", "")) 
+                     na.strings = c("NaN", ""))
+  
+  # Ensure necessary columns exist in the additional_data file
+  if (!all(c("file_name", "trial_start", "mass", "k", "constant") %in% colnames(additional_data))) {
+    stop("The additional dataset does not contain one or more necessary columns: 'file_name', 'trial_start', 'mass', 'k', 'constant'.")
+  }
+  
+  #Ensure necessary columns are in the right format
+  if (all(grepl("^\\d{2}:\\d{2}:\\d{2}$", additional_data$trial_start))==F){
+    stop("One or more entries in trial_start are not in an hh:mm:ss format")
+  }
   
   # Extract notes, and the file created info from the datafrmae
   notes <- data[3,2]
@@ -40,6 +53,7 @@ file_prepare <- function(directory, trial_start) {
   # Remove the additional info and reset rownames
   data<-data[-c(1:6), ]
   rownames(data)<-NULL
+
   
   
   # Add time in seconds and hours assuming a sampling frequency of 1 Hz
@@ -58,6 +72,8 @@ file_prepare <- function(directory, trial_start) {
   
   # Add a column that tells you whether the system is in static or dynamic
   data$dyn_stat <- ifelse(is.na(data$Side_temp_diff), "static", "dynamic")
+  
+  trial_start<-additional_data$trial_start[additional_data$file_name==file]
   
   # Add the phase of the experiment (e.g. acclimation and trial)
   trial_start_second<-data$Time_sec[data$Clock_time_hours == trial_start]
@@ -79,7 +95,7 @@ file_prepare <- function(directory, trial_start) {
   return(data)
 }
 
-data <- file_prepare(directory = "Sys2_20240616_cunipinna_xx.txt", trial_start = "08:00:00")
+data <- file_prepare(file = "Sys2_20240616_cunipinna_xx.txt", additional_data = additional_data)
 
 
 #### Function to calculate body core temperature if not already done in Shuttlesoft ####
@@ -1204,21 +1220,24 @@ multipanel_plot <- plot_histograms(proj_data)
 
 # PROBLEMS
 
-compile_project_data <- function(directory = getwd()){
-  txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
-  return(txt_files)
+compile_project_data <- function(directory = getwd(), additional_data){
   
-  # Add external missing data to
+  txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
+  
+  data_list <- lapply(txt_files, function(filepath) file_prepare (filepath, additional_data))
+  
+  combined_data <- do.call(rbind, data_list)
+  
+  return(combined_data)
   
   # # Ensure necessary columns exist
   # if (!all(c("Body_core_temp", "shuttle") %in% colnames(data))) {
   #   stop("The dataset does not contain one or more necessary columns: 'Body_core_temp', 'shuttle'.")
   # }
   
-  lapply()
 }
 
-proj_data<-compile_project_data()
+proj_data<-compile_project_data(directory =  getwd(), additional_data = additional_data)
 
 # ID 
 
@@ -1251,3 +1270,4 @@ calc_act_gravitation()
 
 # study_ID
 
+print(proj_data)
