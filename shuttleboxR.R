@@ -18,6 +18,9 @@ proj_data <- read.csv("project_database.csv") # This should be a summary data fi
 
 additional_data<-read.csv("additional_data.csv")
 
+data <- read.delim(file,
+                   header = F)
+
 ##### Function to prepare data file for further processing and detect shuttles ####
 
 file_prepare <- function(file, additional_data) {
@@ -53,8 +56,6 @@ file_prepare <- function(file, additional_data) {
   # Remove the additional info and reset rownames
   data<-data[-c(1:6), ]
   rownames(data)<-NULL
-
-  
   
   # Add time in seconds and hours assuming a sampling frequency of 1 Hz
   data$Time_sec <- seq(0, by = 1, length.out = nrow(data))
@@ -64,16 +65,23 @@ file_prepare <- function(file, additional_data) {
   data$date <- as.Date(filecreated)
   
   # Make sure the date is correct in case the experiment goes on past midnight
-    # Extract the second when the experiment passed midnight
-    # Make all observations past that date the next day
+  # Extract the second when the experiment passed midnight
+  # Make all observations past that date the next day
   midnight_observation <- data$Time_sec[data$Clock_time_hours == "00:00:00"]
-  data$date<-format(as.Date(ifelse(data$Time_sec>=midnight_observation, data$date+1, data$date)), "%d/%m/%Y")
-  data$datetime<-as.POSIXct(paste(data$date, data$Clock_time_hours), format = "%d/%m/%Y %H:%M:%S")
+  if(length(midnight_observation)>0){
+    data$date<-ifelse(data$Time_sec>=midnight_observation, 
+                      data$date+1, 
+                      data$date)
+  }
+  
+  data$datetime<-as.POSIXct(paste(data$date, data$Clock_time_hours), format = "%Y-%m-%d %H:%M:%S")
   
   # Add a column that tells you whether the system is in static or dynamic
   data$dyn_stat <- ifelse(is.na(data$Side_temp_diff), "static", "dynamic")
   
-  trial_start<-additional_data$trial_start[additional_data$file_name==file]
+  filename <- gsub(paste0("^", getwd(), "/?"), "", file)
+  
+  trial_start<-additional_data$trial_start[additional_data$file_name==filename]
   
   # Add the phase of the experiment (e.g. acclimation and trial)
   trial_start_second<-data$Time_sec[data$Clock_time_hours == trial_start]
@@ -92,11 +100,12 @@ file_prepare <- function(file, additional_data) {
   # Ensure the shuttle column is numeric
   data$shuttle <- as.numeric(data$shuttle)
   
+  # data<-type.convert(data, as.is = T)
+  
   return(data)
 }
 
-data <- file_prepare(file = "Sys2_20240616_cunipinna_xx.txt", additional_data = additional_data)
-
+data <- file_prepare(file = "C:/GitHub/ShuttleboxR/Sys1_20240613_parcatus_rr.txt", additional_data = additional_data)
 
 #### Function to calculate body core temperature if not already done in Shuttlesoft ####
 
@@ -132,8 +141,6 @@ BM <- 30  # Example body mass
 constant <- 3.69  # Example constant
 k <- -0.574  # Example k value
 
-data$Body_core_temp<-as.character(data$Body_core_temp)
-
 # Calculate core body temperature
 data <- calc_core_body_temp(data, BM, constant, k)
 
@@ -168,7 +175,7 @@ calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start
 }
 
 # Example usage
-Tpref <- calc_Tpref(data, method = "median", exclude_start_minutes = 240, exclude_end_minutes = 5)
+Tpref <- calc_Tpref(data, method = "median", exclude_start_minutes = 0, exclude_end_minutes = 0)
 
 #### Function to calculate upper and lower avoidance temperatures ####
 
@@ -1220,11 +1227,13 @@ multipanel_plot <- plot_histograms(proj_data)
 
 # PROBLEMS
 
+
 compile_project_data <- function(directory = getwd(), additional_data){
   
   txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
+  data_list <- lapply(txt_files, file_prepare, additional_data = additional_data)
   
-  data_list <- lapply(txt_files, function(filepath) file_prepare (filepath, additional_data))
+  
   
   combined_data <- do.call(rbind, data_list)
   
@@ -1237,7 +1246,7 @@ compile_project_data <- function(directory = getwd(), additional_data){
   
 }
 
-proj_data<-compile_project_data(directory =  getwd(), additional_data = additional_data)
+proj_data<-compile_project_data(additional_data = additional_data)
 
 # ID 
 
