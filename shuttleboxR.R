@@ -18,10 +18,7 @@ proj_data <- read.csv("project_database.csv") # This should be a summary data fi
 
 additional_data<-read.csv("additional_data.csv")
 
-data <- read.delim(file,
-                   header = F)
-
-##### Function to prepare data file for further processing and detect shuttles ####
+#### Function to prepare data file for further processing and detect shuttles ####
 
 file_prepare <- function(file, additional_data) {
   
@@ -100,7 +97,7 @@ file_prepare <- function(file, additional_data) {
   # Ensure the shuttle column is numeric
   data$shuttle <- as.numeric(data$shuttle)
   
-  # data<-type.convert(data, as.is = T)
+  data<-type.convert(data, as.is = T)
   
   return(data)
 }
@@ -195,17 +192,20 @@ calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes
   data <- data[data$Time_sec > start_time & data$Time_sec < end_time, ]
   
   # Calculate the percentiles
-  Tavoid_lower <<- quantile(data$Body_core_temp, percentiles[1], na.rm = TRUE)
-  Tavoid_upper <<- quantile(data$Body_core_temp, percentiles[2], na.rm = TRUE)
+  Tavoid_lower <- quantile(data$Body_core_temp, percentiles[1], na.rm = TRUE)
+  Tavoid_upper <- quantile(data$Body_core_temp, percentiles[2], na.rm = TRUE)
   
   # Print values
   print(paste("Tavoid Lower:", Tavoid_lower))
-  print(paste("Tavoid Upper:", Tavoid_upper))
+  print(paste("Tavoid Upper:", Tavoid_upper)) 
+  
+  return(c(Tavoid_lower, Tavoid_upper))
+
 }
 
 # Example usage
 # Calculate Tavoid values
-Tavoid_values <- calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 240, exclude_end_minutes = 5)
+Tavoid_values <-calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0)
 
 #### Function to calculate total distance moved ####
 
@@ -453,9 +453,9 @@ rate_of_change <- 5  # Rate of temperature change in °C/h
 
 min_grav_time <- calc_min_gravitation(start_temp, target_temp, rate_of_change)
 
-#### Function to plot time spent at extreme temperatures, near set limits ####
+#### Function to calculate time spent at extreme temperatures, near set limits ####
 
-calc_extremes <- function(data, upper_limit, lower_limit, threshold = 0, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+calc_extremes <- function(data, threshold = 0.2*(max(data$Max_temp_loligo)-max(data$Min_temp)), exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure necessary columns exist
   if (!("Time_sec" %in% colnames(data) && "Body_core_temp" %in% colnames(data))) {
     stop("The dataset does not contain 'Time_sec' and/or 'Body_core_temp' columns.")
@@ -472,6 +472,9 @@ calc_extremes <- function(data, upper_limit, lower_limit, threshold = 0, exclude
   # Convert time in secxonds to minutes
   data$Time_min <- data$Time_sec / 60
   
+  upper_limit<-max(data$Max_temp_loligo)
+  lower_limit<-max(data$Min_temp)
+  
   # Determine time spent near upper and lower extreme temperatures with the threshold
   upper_threshold <- upper_limit - threshold
   lower_threshold <- lower_limit + threshold
@@ -485,11 +488,13 @@ calc_extremes <- function(data, upper_limit, lower_limit, threshold = 0, exclude
   print(paste("Time spent near upper extreme temperatures (%):", time_near_upper_extreme))
   print(paste("Time spent near lower extreme temperatures (%):", time_near_lower_extreme))
   
-  return(list(time_near_upper_extreme = time_near_upper_extreme, time_near_lower_extreme = time_near_lower_extreme))
+  return(c(time_near_lower_extreme, time_near_upper_extreme))
 }
 
 # Example usage
-extreme_time_percent <- calc_extremes(data, upper_limit = 25, lower_limit = 5, threshold = 4, exclude_start_minutes = 240, exclude_end_minutes = 5)
+extreme_time_percent <- calc_extremes(data, exclude_start_minutes = 240, exclude_end_minutes = 5)
+calc_extremes(data, exclude_start_minutes = 0, exclude_end_minutes = 0)[2]
+
 
 #### Function to plot histogram of movement speeds ####
 
@@ -1211,72 +1216,86 @@ multipanel_plot <- plot_histograms(proj_data)
   # overall (external) data file containing data that is not in the .txt files (mass, trial start, etc.)
 
 # VARIABLES AND ACCOMPANYING FUNCTIONS
-  # ID - from file name 
+  # # ID - from file name 
   # total_length - external data
-  # gravitation time - calc_act_gravitation
+  # # gravitation time - calc_act_gravitation
   # mass - external data
-  # distance travelled - calc_distance
-  # number of shuttles - file_prepare (so not necessary)
-  # Tpref - calc_Tpref
-  # Tavoid - calc_Tavoid
+  # # distance travelled - calc_distance
+  # # number of shuttles - file_prepare (so not necessary)
+  # # Tpref - calc_Tpref
+  # # Tavoid - calc_Tavoid
   # pref range - ?
-  # time near limits - 
-  # body core temp - calc_core_body_temp()
+  # # time near limits - 
+  # # body core temp - calc_core_body_temp()
  
   # 
 
 # PROBLEMS
 
 
-compile_project_data <- function(directory = getwd(), additional_data){
+compile_project_data <- function(directory = getwd(), 
+                                 additional_data, 
+                                 print_results = F,
+                                 Tpref_method = "median", 
+                                 Tavoid_percintiles = c(0.05, 0.95),
+                                 textremes_threshold = 0.2*(max(data$Max_temp_loligo)-max(data$Min_temp)),
+                                 core_temp_variance_type = "std_error"){
   
   txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
   data_list <- lapply(txt_files, file_prepare, additional_data = additional_data)
   
+  apply_functions <- function(df, 
+                              Tpref_method = "median", 
+                              Tavoid_percintiles = c(0.05, 0.95),
+                              textremes_threshold = 0.2*(max(df$Max_temp_loligo)-max(df$Min_temp)),
+                              core_temp_variance_type = "std_error") {
+    Tpref <- calc_Tpref(df, method = "median")
+    grav_time <- calc_act_gravitation(df)
+    distance <- calc_distance(df)
+    Tavoid <- calc_Tavoid(df, percentiles = Tavoid_percintiles)
+    textremes <- calc_extremes(df, threshold = textremes_threshold)
+    core_temp_variance <- calc_variance(df, variance_type = core_temp_variance_type)
+    nr_shuttles <- calc_shuttling_frequency(df)
+    
+    return(c(Tpref, grav_time, distance, Tavoid, textremes, core_temp_variance, nr_shuttles))
+  }
   
+  names(data_list)<-txt_files
   
-  combined_data <- do.call(rbind, data_list)
+  if (print_results == F) sink(tempfile())
   
-  return(combined_data)
+  # Apply functions to each dataframe in the list and collect results
+  results <- do.call(rbind, lapply(names(data_list), function(name) {
+    # Apply the functions
+    func_results <- apply_functions(data_list[[name]])
+    # invisible(capture.output(apply_functions(), file = "NUL")) 
+    
+    # Combine results into a data frame
+    data.frame(
+      filename = gsub(paste0("^", directory, "/?"), "", name),
+      Tpref = func_results[1],
+      grav_time  = func_results[2],
+      distance  = func_results[3],
+      Tavoid_low  = func_results[4],
+      Tavoid_high = func_results[5],
+      t_near_low_extreme  = func_results[6],
+      t_near_high_extreme  = func_results[7],
+      core_temp_variance  = func_results[8],
+      nr_shuttles  = func_results[9]
+      
+    )
+    
+  }))
   
-  # # Ensure necessary columns exist
-  # if (!all(c("Body_core_temp", "shuttle") %in% colnames(data))) {
-  #   stop("The dataset does not contain one or more necessary columns: 'Body_core_temp', 'shuttle'.")
-  # }
+  if (print_results == F) sink()
+  
+  rownames(results) <- NULL
+  
+  return(results)
   
 }
 
-proj_data<-compile_project_data(additional_data = additional_data)
+results2<-compile_project_data(print_results = T, additional_data = additional_data)
 
-# ID 
+class(proj_data)
 
-# total_length (trial length in hours)
-max(Time_h)
-
-# mass (fish mass)
-  #enter
-
-# grav_time (gravitation time)
-calc_act_gravitation()
-
-# distance (distance travelled)
-
-# shuttles (number of shuttles)
-
-# Tpref (preferred temperature)
-
-# Tavoid_lower (lower avoidance temperature)
-
-# Tavoid_upper (upper avoidance temperature)
-
-# pref_range (???)
-
-# time_near_max (time near upper limit)
-
-# time_near_min (time near lower limit)
-
-# time_near_limits
-
-# study_ID
-
-print(proj_data)
