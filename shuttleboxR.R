@@ -37,8 +37,8 @@ file_prepare <- function(file, additional_data) {
                      na.strings = c("NaN", ""))
   
   # Ensure necessary columns exist in the additional_data file
-  if (!all(c("file_name", "trial_start", "mass", "k", "constant") %in% colnames(additional_data))) {
-    stop("The additional dataset does not contain one or more necessary columns: 'file_name', 'trial_start', 'mass', 'k', 'constant'.")
+  if (!all(c("file_name", "trial_start", "mass", "a_value", "b_value") %in% colnames(additional_data))) {
+    stop("The additional dataset does not contain one or more necessary columns: 'file_name', 'trial_start', 'mass', 'a_value', 'b_value'.")
   }
   
   #Ensure necessary columns are in the right format
@@ -106,7 +106,7 @@ data <- file_prepare(file = "C:/GitHub/ShuttleboxR/Sys1_20240613_parcatus_rr.txt
 
 #### Function to calculate body core temperature if not already done in Shuttlesoft ####
 
-calc_core_body_temp <- function(data, BM, constant, k) {
+calc_core_body_temp <- function(data, BM, a_value, b_value) {
   # Ensure necessary columns exist
   if (!all(c("Body_core_temp", "shuttle") %in% colnames(data))) {
     stop("The dataset does not contain one or more necessary columns: 'Body_core_temp', 'shuttle'.")
@@ -120,26 +120,27 @@ calc_core_body_temp <- function(data, BM, constant, k) {
   # Initialize the Body_core_temp column
   data$Body_core_temp <- data$Body_core_temp
   
+  k <- a_value * BM^b_value
+  
   # Calculate body core temperature from second to second
   for (i in 2:nrow(data)) {
     if (data$shuttle[i] == 1) {
       data$Body_core_temp[i] <- data$Body_core_temp[i-1]  # Carry forward the body core temperature at the moment of shuttling
     } else {
       data$Body_core_temp[i] <- data$Body_core_temp[i] + 
-        (data$Body_core_temp[i-1] - data$Body_core_temp[i]) * exp(-(constant * BM^k) * 1 / 60)
+        (data$Body_core_temp[i-1] - data$Body_core_temp[i]) * exp(-k * 1 / 60)
     }
   }
   
   return(data)
 }
 
-# Example usage
+# # Example usage
 BM <- 30  # Example body mass
-constant <- 3.69  # Example constant
-k <- -0.574  # Example k value
-
+a_value <- 3.690
+b_value <- -0.574
 # Calculate core body temperature
-data2 <- calc_core_body_temp(data, BM, constant, k)
+data <- calc_core_body_temp(data, BM, a_value, b_value)
 
 
 #### Function to calculate Tpref using either the mean or median of all body core temperature values ####
@@ -172,7 +173,10 @@ calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start
 }
 
 # Example usage
+# 
 # Tpref <- calc_Tpref(data, method = "median", exclude_start_minutes = 0, exclude_end_minutes = 0)
+# 
+# print(Tpref)
 
 #### Function to calculate upper and lower avoidance temperatures ####
 
@@ -207,6 +211,37 @@ calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes
 # Calculate Tavoid values
 
 # Tavoid_values <-calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0)
+
+#### Function to calculate Tpref range ####
+
+calc_Tpref_range <- function(data, percentiles = c(0.25, 0.75), exclude_start_minutes = 0, exclude_end_minutes = 0) {
+  
+  # Ensure the percentiles are valid
+  if (length(percentiles) != 2 || any(percentiles < 0) || any(percentiles > 1)) {
+    stop("Percentiles should be a vector of two values between 0 and 1")
+  }
+  
+  # Convert exclude minutes to seconds
+  exclude_start_seconds <- exclude_start_minutes * 60
+  exclude_end_seconds <- exclude_end_minutes * 60
+  
+  # Exclude initial and final data if necessary
+  start_time <- exclude_start_seconds
+  end_time <- max(data$Time_sec) - exclude_end_seconds
+  data <- data[data$Time_sec > start_time & data$Time_sec < end_time, ]
+  
+  # Calculate the percentiles
+  Trange_lower <- as.numeric(quantile(data$Body_core_temp, percentiles[1], na.rm = TRUE))
+  Trange_upper <- as.numeric(quantile(data$Body_core_temp, percentiles[2], na.rm = TRUE))
+  
+  Tpref_range <- Trange_upper-Trange_lower
+  
+  return(Tpref_range)
+  
+}
+
+# Tpref_range <- calc_Tpref_range(data)
+
 
 #### Function to calculate total distance moved ####
 
@@ -301,11 +336,11 @@ calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_min
   print(paste("Time in DECR Chamber:", time_in_chamberDECR))
   print(paste("Time in INCR Chamber:", time_in_chamberINCR))
   
-  return(list(time_in_chamberDECR = time_in_chamberDECR, time_in_chamberINCR = time_in_chamberINCR))
+  return(c(time_in_chamberDECR, time_in_chamberINCR))
 }
 
 # Example usage
-occ_time <- calc_occupancy_time(data)
+# occ_time <- calc_occupancy_time(data)
 
 #### Function to plot a histogram of time spent at different core body temperatures ####
 
@@ -1201,18 +1236,19 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
 
 
 # TO DO
-# Fix acclimation exclusion
+
 
 compile_project_data <- function(directory = getwd(), 
-                                 additional_data, 
-                                 exclude_acclimation,
-                                 exclude_start_minutes,
-                                 exclude_end_minutes,
-                                 print_results = F,
-                                 Tpref_method, 
-                                 Tavoid_percintiles,
-                                 textremes_threshold,
-                                 core_temp_variance_type){
+                                 additional_data,
+                                 print_results = F, 
+                                 exclude_acclimation = F,
+                                 exclude_start_minutes = 0, 
+                                 exclude_end_minutes = 0,
+                                 Tpref_method = "median",
+                                 Tpref_range_percentiles = c(0.25, 0.75),
+                                 Tavoid_percintiles = c(0.05, 0.95),
+                                 textremes_threshold = expression(0.2 * (max(df$Max_temp_limit) - max(df$Min_temp_limit))),
+                                 core_temp_variance_type = "std_error"){
   
   txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
   data_list <- lapply(txt_files, file_prepare, additional_data = additional_data)
@@ -1221,32 +1257,43 @@ compile_project_data <- function(directory = getwd(),
   
   apply_functions <- function(df,
                               df_name,
-                              exclude_acclimation = F,
-                              exclude_start_minutes = 0, 
-                              exclude_end_minutes = 0,
-                              Tpref_method = "median", 
-                              Tavoid_percintiles = c(0.05, 0.95),
-                              textremes_threshold = 0.2*(max(df$Max_temp_limit)-max(df$Min_temp_limit)),
-                              core_temp_variance_type = "std_error") {
+                              exc_accl = exclude_acclimation,
+                              exc_start = exclude_start_minutes, 
+                              exc_end = exclude_end_minutes,
+                              Tpref_met = Tpref_method, 
+                              Tpref_range_perc = Tpref_range_percentiles,
+                              Tavoid_perc = Tavoid_percintiles,
+                              textremes_th = eval(textremes_threshold),
+                              Tcore_variance = core_temp_variance_type) {
     ifelse(exclude_acclimation == T, df<-subset(df, df$trial_phase != "acclimation"), df)
     filename = gsub(paste0("^", directory, "/?"), "", df_name)
     mass<-additional_data$mass[additional_data$file_name==filename]
-    k<-additional_data$k[additional_data$file_name==filename]
-    constant<-additional_data$constant[additional_data$file_name==filename]
-    df <- calc_core_body_temp(df, BM = mass, k = k, constant = constant)
-    Tpref <- calc_Tpref(df, method = "median")
-    grav_time <- calc_act_gravitation(df)
-    distance <- calc_distance(df)
-    Tavoid <- calc_Tavoid(df, percentiles = Tavoid_percintiles)
-    textremes <- calc_extremes(df, threshold = textremes_threshold)
-    core_temp_variance <- calc_variance(df, variance_type = core_temp_variance_type)
-    nr_shuttles <- calc_shuttling_frequency(df)
-    chamber_seconds <- calc_occupancy_time(df)
+    a_value<-additional_data$a_value[additional_data$file_name==filename]
+    b_value<-additional_data$b_value[additional_data$file_name==filename]
+    a_value<-additional_data$a_value[additional_data$file_name==filename]
+    b_value<-additional_data$b_value[additional_data$file_name==filename]
+    df <- calc_core_body_temp(df, BM = mass, a_value = a_value, b_value = b_value)
+    Tpref <- calc_Tpref(df, method = Tpref_met, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
+    grav_time <- calc_act_gravitation(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
+    distance <- calc_distance(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
+    Tavoid <- calc_Tavoid(df, percentiles = Tavoid_perc, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
+    Tpref_range <- Tavoid[2]-Tavoid[1]
+    textremes <- calc_extremes(df, threshold = textremes_th, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
+    core_temp_variance <- calc_variance(df, variance_type = Tcore_variance, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
+    nr_shuttles <- calc_shuttling_frequency(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
+    chamber_seconds <- calc_occupancy_time(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
     
-    return(c(Tpref, grav_time, distance, Tavoid, textremes, core_temp_variance, nr_shuttles))
+    return(list(Tpref = Tpref,
+                Tpref_range = Tpref_range,
+                grav_time = grav_time, 
+                distance = distance,
+                Tavoid = Tavoid,
+                textremes = textremes,
+                core_temp_variance = core_temp_variance,
+                nr_shuttles = nr_shuttles,
+                chamber_seconds = chamber_seconds))
+    
   }
-  
-  
   
   if (print_results == F) sink(tempfile())
   
@@ -1258,17 +1305,18 @@ compile_project_data <- function(directory = getwd(),
     # Combine results into a data frame
     data.frame(
       filename = gsub(paste0("^", directory, "/?"), "", name),
-      Tpref = func_results[1],
-      grav_time  = func_results[2],
-      distance  = func_results[3],
-      Tavoid_low  = func_results[4],
-      Tavoid_high = func_results[5],
-      t_near_low_extreme  = func_results[6],
-      t_near_high_extreme  = func_results[7],
-      core_temp_variance  = func_results[8],
-      nr_shuttles  = func_results[9],
-      seconds_in_DECR = func_results [10],
-      seconds_in_INCR = func_results [11]
+      Tpref = func_results$Tpref,
+      Tpref_range = func_results$Tpref_range,
+      grav_time  = func_results$grav_time,
+      distance  = func_results$distance,
+      Tavoid_low  = func_results$Tavoid[1],
+      Tavoid_high = func_results$Tavoid[2],
+      t_near_low_extreme  = func_results$textremes[1],
+      t_near_high_extreme  = func_results$textremes[2],
+      core_temp_variance  = func_results$core_temp_variance,
+      nr_shuttles  = func_results$nr_shuttles,
+      seconds_in_DECR = func_results$chamber_seconds[1],
+      seconds_in_INCR = func_results$chamber_seconds[2]
       
     )
     
@@ -1282,7 +1330,17 @@ compile_project_data <- function(directory = getwd(),
   
 }
 
+
+
 results<-compile_project_data(print_results = F, additional_data = additional_data, exclude_acclimation = F)
 
-class(proj_data)
-
+calc_Tpref(data, method = "median")
+calc_Tpref_range(data)
+calc_act_gravitation(data)
+calc_distance(data)
+Tavoid<-calc_Tavoid(data)
+Tavoid[2] - Tavoid[1]
+calc_extremes(data)
+calc_variance(data)
+calc_shuttling_frequency(data)
+calc_occupancy_time(data)
