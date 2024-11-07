@@ -16,35 +16,27 @@ getwd()
 
 # proj_data <- read.csv("project_database.csv") # This should be a summary data file with data from numerous fish (e.g. all fish in a study)
 
-additional_data<-read.csv("additional_data.csv")
+metadata<-read.csv("additional_data.csv", na.strings = c("NaN", ""))
 
 #### Function to prepare data file for further processing and detect shuttles ####
-
-file_prepare <- function(file, additional_data) {
   
   # Load .txt data file that shuttlesoft produces into R
   # Don't load headers, because the additional info at the top of the .txt file will make a confusing dataframe
   # Rename data columns
-  
-  data <- read.delim(file,
-                     header = F,
-                     col.names = (c("Clock_time_hours", "Side_presence", "Body_core_temp", "Pref_temp_loligo", "INCR_side_temp",
-                                    "DECR_side_temp", "x_pos", "y_pos", "U_swim", "Dist_moved", "Time_in_INCR", "Time_in_DECR",
-                                    "Side_temp_diff", "Hyst_side_temp_diff", "INCR_side_set", "Hyst_INCR_side_set", "DECR_side_set",
-                                    "Hyst_DECR_side_set", "k", "Max_temp_limit", "Min_temp_limit", "Temp_change_rate", "Avoid_up_mean_loligo",
-                                    "Unknown_1_loligo", "Unknown_2_loligo", "Unknown_3_loligo")),
-                     
-                     na.strings = c("NaN", ""))
-  
-  # Ensure necessary columns exist in the additional_data file
-  if (!all(c("file_name", "trial_start", "mass", "a_value", "b_value") %in% colnames(additional_data))) {
-    stop("The additional dataset does not contain one or more necessary columns: 'file_name', 'trial_start', 'mass', 'a_value', 'b_value'.")
-  }
-  
-  #Ensure necessary columns are in the right format
-  if (all(grepl("^\\d{2}:\\d{2}:\\d{2}$", additional_data$trial_start))==F){
-    stop("One or more entries in trial_start are not in an hh:mm:ss format")
-  }
+
+file <- "C:/GitHub/ShuttleboxR/Sys1_20240613_parcatus_rr.txt"
+
+data <- read.delim(file,
+                   header = F,
+                   col.names = (c("Clock_time_hours", "Side_presence", "Body_core_temp", "Pref_temp_loligo", "INCR_side_temp",
+                                  "DECR_side_temp", "x_pos", "y_pos", "U_swim", "Dist_moved", "Time_in_INCR", "Time_in_DECR",
+                                  "Side_temp_diff", "Hyst_side_temp_diff", "INCR_side_set", "Hyst_INCR_side_set", "DECR_side_set",
+                                  "Hyst_DECR_side_set", "k", "Max_temp_limit", "Min_temp_limit", "Temp_change_rate", "Avoid_up_mean_loligo",
+                                  "Unknown_1_loligo", "Unknown_2_loligo", "Unknown_3_loligo")),
+                   
+                   na.strings = c("NaN", ""))
+
+file_prepare <- function(data, filename, metadata) {
   
   # Extract notes, and the file created info from the datafrmae
   notes <- data[3,2]
@@ -58,7 +50,7 @@ file_prepare <- function(file, additional_data) {
   data$Time_sec <- seq(0, by = 1, length.out = nrow(data))
   data$Time_h <- data$Time_sec / 3600
   
-  # Add the date off the trial by extracting it from the filecreated object
+  # Add the date of the trial by extracting it from the filecreated object
   data$date <- as.Date(filecreated)
   
   # Make sure the date is correct in case the experiment goes on past midnight
@@ -76,9 +68,39 @@ file_prepare <- function(file, additional_data) {
   # Add a column that tells you whether the system is in static or dynamic
   data$dyn_stat <- ifelse(is.na(data$Side_temp_diff), "static", "dynamic")
   
-  filename <- gsub(paste0("^", getwd(), "/?"), "", file)
-  
-  trial_start<-additional_data$trial_start[additional_data$file_name==filename]
+  if (missing(metadata)) {
+    trial_start <- data$Clock_time_hours[1]
+    message("Metadata not provided; using default shuttlesoft values.")
+  } else {
+    
+    # If the metadata is present, ensure necessary columns exist in the metadata
+    if (!all(c("file_name", "trial_start", "mass", "a_value", "b_value") %in% colnames(metadata))) {
+      message("Warning: The metadata does not contain one or more necessary columns: 'file_name', 'trial_start', 'mass', 'a_value', 'b_value'.")
+    }
+    
+    # Find rows with NA in specified columns
+    columns_to_check <- c("file_name", "trial_start", "mass", "a_value", "b_value")
+    rows_with_na <- apply(metadata[columns_to_check], 1, function(row) any(is.na(row)))
+    
+    # If there are any rows with NA, throw an error mentioning file names
+    if (any(rows_with_na)) {
+      names_with_na <- metadata$file_name[rows_with_na]
+      message (paste("Warning: The metadata contains NA values in one or more of these columns: 'file_name', 'trial_start', 'mass', 'a_value', 'b_value'
+",paste(names_with_na, collapse = "\n ")))
+    }
+    
+    #Ensure necessary columns are in the right format
+    if (all(grepl("^\\d{2}:\\d{2}:\\d{2}$", metadata$trial_start))==F){
+      message("Warning: One or more entries in trial_start are not in an hh:mm:ss format")
+    }
+    
+    if(!("trial_start" %in% names(data))|is.na(metadata$trial_start[metadata$file_name==filename])){
+      trial_start <- data$Clock_time_hours[1]
+    }else {
+      # filename <- gsub(paste0("^", getwd(), "/?"), "", file)
+      trial_start<-metadata$trial_start[metadata$file_name==filename]
+    }
+  }
   
   # Add the phase of the experiment (e.g. acclimation and trial)
   trial_start_second<-data$Time_sec[data$Clock_time_hours == trial_start]
@@ -102,7 +124,7 @@ file_prepare <- function(file, additional_data) {
   return(data)
 }
 
-data <- file_prepare(file = "C:/GitHub/ShuttleboxR/Sys1_20240613_parcatus_rr.txt", additional_data = additional_data)
+data <- file_prepare(data, filename = "Sys1_20240613_parcatus_rr.txt", metadata = metadata)
 
 #### Function to calculate body core temperature if not already done in Shuttlesoft ####
 
@@ -1239,7 +1261,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
 
 
 compile_project_data <- function(directory = getwd(), 
-                                 additional_data,
+                                 metadata,
                                  print_results = F, 
                                  exclude_acclimation = F,
                                  exclude_start_minutes = 0, 
@@ -1251,7 +1273,7 @@ compile_project_data <- function(directory = getwd(),
                                  core_temp_variance_type = "std_error"){
   
   txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
-  data_list <- lapply(txt_files, file_prepare, additional_data = additional_data)
+  data_list <- lapply(txt_files, file_prepare, metadata = metadata)
   
   names(data_list)<-txt_files
   
@@ -1267,11 +1289,11 @@ compile_project_data <- function(directory = getwd(),
                               Tcore_variance = core_temp_variance_type) {
     ifelse(exclude_acclimation == T, df<-subset(df, df$trial_phase != "acclimation"), df)
     filename = gsub(paste0("^", directory, "/?"), "", df_name)
-    mass<-additional_data$mass[additional_data$file_name==filename]
-    a_value<-additional_data$a_value[additional_data$file_name==filename]
-    b_value<-additional_data$b_value[additional_data$file_name==filename]
-    a_value<-additional_data$a_value[additional_data$file_name==filename]
-    b_value<-additional_data$b_value[additional_data$file_name==filename]
+    mass<-metadata$mass[metadata$file_name==filename]
+    a_value<-metadata$a_value[metadata$file_name==filename]
+    b_value<-metadata$b_value[metadata$file_name==filename]
+    a_value<-metadata$a_value[metadata$file_name==filename]
+    b_value<-metadata$b_value[metadata$file_name==filename]
     df <- calc_core_body_temp(df, BM = mass, a_value = a_value, b_value = b_value)
     Tpref <- calc_Tpref(df, method = Tpref_met, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
     grav_time <- calc_act_gravitation(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
@@ -1332,7 +1354,7 @@ compile_project_data <- function(directory = getwd(),
 
 
 
-results<-compile_project_data(print_results = F, additional_data = additional_data, exclude_acclimation = F)
+results<-compile_project_data(directory = "C:/GitHub/ShuttleboxR/Raw .txt files", print_results = F, metadata = ext_info, exclude_acclimation = T)
 
 calc_Tpref(data, method = "median")
 calc_Tpref_range(data)
@@ -1344,3 +1366,6 @@ calc_extremes(data)
 calc_variance(data)
 calc_shuttling_frequency(data)
 calc_occupancy_time(data)
+
+
+\ 
