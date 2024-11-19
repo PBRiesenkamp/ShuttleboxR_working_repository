@@ -11,6 +11,9 @@
   # Check which variables in the data are used in the functions
   # Check how acclimation exclusion behaves (distance)
   # Add option to highlight specific individuals in histograms
+  # Change exclude start/end minutes thign
+  # Check if core temp calculation is correct
+  # Check what unknown loligo columns are
 
 rm(list=ls())
 
@@ -26,45 +29,56 @@ getwd()
 file <- "C:/GitHub/ShuttleboxR/Sys1_20240613_parcatus_rr.txt"
 data<-read.csv("data.csv")
 
-data <- read.delim(file,
+read.shuttlesoft <- function (file){
+  # Load .txt data file that shuttlesoft produces into R
+  # Don't load headers, because the additional info at the top of the .txt file will make a confusing dataframe
+  # Rename data columns
+  data<-read.delim(file,
                    header = F,
                    col.names = (c("time", "zone", "core_T", "Tpref_loligo", "INCR_temp",
                                   "DECR_temp", "x_pos", "y_pos", "velocity", "distance", "time_in_INCR", "time_in_DECR",
                                   "delta_temp", "dyn_hysteresis", "stat_temp_INCR", "stat_hyst_INCR", "stat_temp_DECR",
-                                  "stat_hyst_DECR", "k", "max_temp", "min_temp", "change_rate", "avoid_temp_upper_avg",
+                                  "stat_hyst_DECR", "k", "max_temp", "min_temp", "change_rate", "avoid_temp_upper_avg_loligo",
                                   "Unknown_1_loligo", "Unknown_2_loligo", "Unknown_3_loligo")),
 
                    na.strings = c("NaN", ""))
+  
+  # Extract notes, the file created info and the pixel ratio from the dataframe
+  data<-data[!is.na(data$time), ]
+  notes <- data$zone[data$time == "Notes"]
+  filecreated <- as.POSIXct(data$zone[data$time == "File created"], format = "%d/%m/%Y; %H:%M")
+  pixel_ratio <- data$zone[data$time == "Pixel Ratio [cm/pix]"]
+  
+   # Remove the additional info and reset rownames
+  data<-data[!is.na(data$INCR_temp), ]
+  numeric_rows <- !is.na(suppressWarnings(as.numeric(data$INCR_temp)))
+  data<-data[numeric_rows, ]
+  rownames(data)<-NULL 
+  
+  # Add notes and pixel ratio
+  data$notes <- notes
+  data$pixel_ratio <- pixel_ratio
+  
+  # Add the date of the trial by extracting it from the filecreated object
+  data$date <- as.Date(filecreated)
+ 
+  data = subset(data, select = -c(k, Tpref_loligo, avoid_temp_upper_avg_loligo, Unknown_1_loligo, Unknown_2_loligo, Unknown_3_loligo))
+  
+  return(data)
+}
+
+data <- read.shuttlesoft(file)
 
 metadata<-read.csv("additional_data.csv", na.strings = c("NaN", ""))
 
 #### Function to prepare data file for further processing and detect shuttles ####
-  
-  # Load .txt data file that shuttlesoft produces into R
-  # Don't load headers, because the additional info at the top of the .txt file will make a confusing dataframe
-  # Rename data columns
 
 file_prepare <- function(data, filename, metadata, multidat = F) {
-  
-  # Extract notes, and the file created info from the dataframe
-  data<-data[!is.na(data$time), ]
-  notes <- data$zone[data$time == "Notes"]
-  filecreated <- as.POSIXct(data$zone[data$time == "File created"], format = "%d/%m/%Y; %H:%M")
-  if ("date" %in% colnames(data)) rm(filecreated)
-  
-  # Remove the additional info and reset rownames
-  data<-data[!is.na(data$INCR_temp), ]
-  numeric_rows <- !is.na(suppressWarnings(as.numeric(data$INCR_temp)))
-  data<-data[numeric_rows, ]
-  rownames(data)<-NULL
-  
   
   # Add time in seconds and hours assuming a sampling frequency of 1 Hz
   data$time_sec <- seq(0, by = 1, length.out = nrow(data))
   data$time_h <- data$time_sec / 3600
   
-  # Add the date of the trial by extracting it from the filecreated object
-  if (exists("filecreated")) data$date <- as.Date(filecreated)
   
   # Make sure the date is correct in case the experiment goes on past midnight
   # Extract the second when the experiment passed midnight
@@ -76,7 +90,10 @@ file_prepare <- function(data, filename, metadata, multidat = F) {
                       data$date)
   }
   
+  # Create datetime object
   data$datetime<-as.POSIXct(paste(data$date, data$time), format = "%Y-%m-%d %H:%M:%S")
+  
+  
   
   # Add a column that tells you whether the system is in static or dynamic
   if ("delta_temp" %in% colnames(data))  data$dyn_stat <- ifelse(is.na(data$delta_temp), "static", "dynamic")
@@ -141,6 +158,11 @@ trial_start <- suppressWarnings(trialstart (metadata = metadata))} else {
   
   data<-type.convert(data, as.is = T)
   
+  col_order <- c("datetime", "date", "time", "time_sec", "time_h", "zone", "INCR_temp", "DECR_temp", "core_T",  "x_pos", "y_pos", "velocity", "distance",
+                 "time_in_INCR", "time_in_DECR", "shuttle", "trial_phase", "dyn_stat","delta_temp", "dyn_hysteresis", "stat_temp_INCR", "stat_hyst_INCR", "stat_temp_DECR",
+                 "stat_hyst_DECR", "max_temp", "min_temp", "change_rate", "pixel_ratio", "notes")
+  data <- data[, col_order]
+  
   return(data)
 }
 
@@ -157,8 +179,6 @@ calc_core_body_temp <- function(data, BM, a_value, b_value, initial_temp) {
     if(!"core_T" %in% colnames(data) || all(is.na(data[["core_T"]])))
     stop("Initial temperature not defined, cannot calculate core body temperature")
     }
-  
-  
   
   # Ensure necessary columns exist
   if (!"shuttle" %in% colnames(data)) {
@@ -197,7 +217,7 @@ data <- calc_core_body_temp(data = data, BM = BM, a_value = a_value, b_value = b
 
 #### Function to calculate Tpref using either the mean or median of all body core temperature values ####
 
-calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start_minutes = 0, exclude_end_minutes = 0) {
+calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
   method <- match.arg(method)
   
   # Convert the time to numeric if not already
@@ -206,7 +226,7 @@ calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Convert the core_T column to numeric
   data$core_T <- as.numeric(data$core_T)
@@ -220,8 +240,10 @@ calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start
     Tpref <- as.numeric(names(sort(table(data$core_T), decreasing = TRUE))[1])
   }
   
+  if (print_results) {
   print(paste("Tpref:", Tpref))
   return(Tpref)
+  }
 }
 
 # Example usage
@@ -232,28 +254,25 @@ Tpref <- calc_Tpref(data, method = "median", exclude_start_minutes = 0, exclude_
 
 #### Function to calculate upper and lower avoidance temperatures ####
 
-calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0) {
+calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
   # Ensure the percentiles are valid
   if (length(percentiles) != 2 || any(percentiles < 0) || any(percentiles > 1)) {
-    stop("Percentiles should be a vector of two values between 0 and 1")
+    stop("Tavoid percentiles should be a vector of two values between 0 and 1")
   }
   
-  # Convert exclude minutes to seconds
-  exclude_start_seconds <- exclude_start_minutes * 60
-  exclude_end_seconds <- exclude_end_minutes * 60
-  
-  # Exclude initial and final data if necessary
-  start_time <- exclude_start_seconds
-  end_time <- max(data$time_sec) - exclude_end_seconds
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  start_time <- exclude_start_minutes * 60
+  end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Calculate the percentiles
   Tavoid_lower <- quantile(data$core_T, percentiles[1], na.rm = TRUE)
   Tavoid_upper <- quantile(data$core_T, percentiles[2], na.rm = TRUE)
   
+  if (print_results) {
   # Print values
   print(paste("Tavoid Lower:", Tavoid_lower))
   print(paste("Tavoid Upper:", Tavoid_upper)) 
+  }
   
   return(c(Tavoid_lower, Tavoid_upper))
 
@@ -262,55 +281,74 @@ calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes
 # Example usage
 # Calculate Tavoid values
 
-# Tavoid_values <-calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0)
+Tavoid_values <-calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = F)
 
 #### Function to calculate total distance moved ####
 
-calc_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+calc_distance1 <- function(data){
+  data$x_pos[data$x_pos == "No object"] <- NA
+  data$y_pos[data$y_pos == "No object"] <- NA
+  
+  data$x_pos <- as.numeric(data$x_pos)*data$pixel_ratio
+  data$y_pos <- as.numeric(data$y_pos)*data$pixel_ratio
+  
+  data$delta_distance <- NA
+  data$delta_distance [1] <- 0
+  
+  for (i in 2:nrow(data)) {
+    data$delta_distance[i] <- sqrt((data$x_pos[i] - data$x_pos[i-1])^2 + (data$y_pos[i]-data$y_pos[i-1])^2)
+  }
+  data$delta_distance[is.na(data$delta_distance)]<-0
+  
+  data$cum_dist <- 0
+  for (i in 2:nrow(data)){
+    data$cum_dist[i]<- data$cum_dist[i-1]+data$delta_distance[i-1]
+  }
+  
+  data = subset(data, select = -c(delta_distance))
+  return(data)
+  
+}
+
+data<-calc_distance1(data)
+
+calc_distance2 <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
   # Ensure the Distance moved column exists
   if (!"distance" %in% colnames(data)) {
     stop("The dataset does not contain a 'distance' column. Please run file_prepare function.")
   }
   
   # Convert exclude minutes to seconds
-  exclude_start_seconds <- exclude_start_minutes * 60
-  exclude_end_seconds <- exclude_end_minutes * 60
-  
   # Exclude initial and final data if necessary
-  start_time <- exclude_start_seconds
-  end_time <- max(data$time_sec) - exclude_end_seconds
-  initial_distance <- 0
+  start_time <- exclude_start_minutes * 60
+  end_time <- max(data$time_sec) - exclude_end_minutes * 60
   
-  if (exclude_start_seconds > 0) {
-    initial_distance <- data$distance[which(data$time_sec <= exclude_start_seconds)]
-    if (length(initial_distance) > 0) {
-      initial_distance <- max(initial_distance, na.rm = TRUE)
-    } else {
-      initial_distance <- 0
-    }
-  }
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  initial_distance <- data$distance[1]
   
+  data$distance <- data$distance - initial_distance
+
   # Calculate net distance moved
   total_distance <- max(data$distance, na.rm = TRUE)
-  net_distance_moved <- total_distance - initial_distance
   
   # Print the result
-  print(paste("Distance Moved:", net_distance_moved, "cm"))
+  if (print_results) {
+  print(paste("Distance Moved:", total_distance, "cm"))
+  }
   
-  return(net_distance_moved)
+  return(total_distance)
 }
 
 # Example usage
-# dist <- calc_distance(data, 240)
+# dist <- calc_distance(data, 60.45)
 
 #### Function to calculate shuttling frequency ####
 
-calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
   # Ensure the 'shuttle' and 'time_sec' columns exist
   if (!all(c("shuttle", "time_sec") %in% colnames(data))) {
-    stop("The dataset does not contain 'shuttle' and/or 'time_sec' columns.")
+    stop("The dataset does not contain 'shuttle' and/or 'time_sec' columns. Run file_prepare on your data.")
   }
   
   # Convert time_sec to numeric if not already
@@ -319,23 +357,25 @@ calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_en
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Calculate shuttling frequency
   shuttles <- sum(data$shuttle, na.rm = TRUE)
-  
+
+  if (print_results) {
   # Print the result
   print(paste("Shuttling frequency:", shuttles))
+  }
   
   return(shuttles)
 }
 
 # Example usage
-# cal_shut_freq <- calc_shuttling_frequency(data, exclude_start_minutes = 240, exclude_end_minutes = 5)
+cal_shut_freq <- calc_shuttling_frequency(data, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
 #### Function to calculate occupancy time in each chamber ####
 
-calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
   # Ensure the 'zone' and 'time_sec' columns exist
   if (!all(c("zone", "time_sec") %in% colnames(data))) {
     stop("The dataset does not contain 'zone' and/or 'time_sec' columns.")
@@ -347,15 +387,17 @@ calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_min
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Calculate occupancy time in each chamber
   time_in_chamberDECR <- sum(data$zone == "DECR", na.rm = TRUE)
   time_in_chamberINCR <- sum(data$zone == "INCR", na.rm = TRUE)
   
+  if (print_results) {
   # Print the results
   print(paste("Time in DECR Chamber:", time_in_chamberDECR))
   print(paste("Time in INCR Chamber:", time_in_chamberINCR))
+  }
   
   return(c(time_in_chamberDECR, time_in_chamberINCR))
 }
@@ -379,7 +421,7 @@ plot_core_T_histogram <- function(data, bin_size, exclude_start_minutes = 0, exc
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Calculate the duration of each bin in minutes
   data$Time_min <- data$time_sec / 60
@@ -428,7 +470,7 @@ calc_variance <- function(data, variance_type = c("std_error", "std_deviation", 
   # Exclude initial and final data if necessary
   start_time <- exclude_start_seconds
   end_time <- max(data$time_sec) - exclude_end_seconds
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Select the variance type
   variance_type <- match.arg(variance_type)
@@ -467,7 +509,7 @@ plot_cumulative_distance <- function(data, exclude_start_minutes = 0, exclude_en
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Convert time in seconds to minutes
   data$Time_min <- data$time_sec / 60
@@ -524,7 +566,7 @@ calc_extremes <- function(data, threshold = 0.2*(max(data$max_temp)-max(data$min
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Convert time in secxonds to minutes
   data$Time_min <- data$time_sec / 60
@@ -569,7 +611,7 @@ plot_speed_histogram <- function(data, binwidth = 0.1, exclude_start_minutes = 0
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Create the histogram plot
   plot <- ggplot(data, aes(x = velocity)) +
@@ -600,7 +642,7 @@ plot_speed_vs_core_T <- function(data, exclude_start_minutes = 0, exclude_end_mi
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Calculate movement speed as the difference in distance moved over time
   data$Movement_Speed <- c(NA, diff(data$distance) / diff(data$time_sec))
@@ -636,7 +678,7 @@ plot_temperature_gradient <- function(data, exclude_start_minutes = 0, exclude_e
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Convert time in seconds to hours
   data$time_h <- data$time_sec / 3600
@@ -676,7 +718,7 @@ plot_temp_segmented <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Perform segmented regression
   fit <- lm(core_T ~ time_h, data = data)
@@ -721,7 +763,7 @@ plot_temp <- function(data, Tpref, Tavoid_low, Tavoid_up, exclude_start_minutes 
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Plot data
   plot <- ggplot(data, aes(x = time_h, y = core_T)) +
@@ -752,7 +794,7 @@ calc_act_gravitation <- function(data, exclude_start_minutes = 0, exclude_end_mi
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Perform segmented regression
   fit <- lm(core_T ~ time_h, data = data)
@@ -1016,7 +1058,7 @@ animate_movements <- function(data, exclude_start_minutes = 0, exclude_end_minut
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Set up 3D plot
   plot3d(data$x_pos, data$y_pos, data$time_sec, type = "l", col = "black", alpha = 0.15,
@@ -1052,7 +1094,7 @@ plot_heatmap <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec > start_time & data$time_sec < end_time, ]
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Plot heatmap
   heatmap_plot <- ggplot(data, aes(x = x_pos, y = y_pos)) +
@@ -1343,6 +1385,7 @@ compile_project_data <- function(directory = getwd(),
       # Calculate core body temperature
       df<-calc_core_body_temp(df, BM, a_value, b_value, initial_temp)
     }
+    
     # Exclude acclimation period if requested from the start. Acclimation period is defined in file_prepare
     ifelse(exclude_acclimation == T, df<-subset(df, df$trial_phase != "acclimation"), df)
     
