@@ -6,14 +6,15 @@
 #
 
 
-# TO DO:
-  # Check if all functions work without shuttlesoft data
-  # Check which variables in the data are used in the functions
-  # Check how acclimation exclusion behaves (distance)
-  # Add option to highlight specific individuals in histograms
-  # Change exclude start/end minutes thign
-  # Check if core temp calculation is correct
-  # Check what unknown loligo columns are
+# TO DO:  
+  # Edit inspect function for non shuttlesoft data to check it contains the right data
+  # Add acclimation exclusion to each function
+  # Remove dependencies as much as possible
+    # Check if segmented regression can be done without segmented package
+
+  # Make overall diagnostic function
+    # Check diagnostic functions
+    # Add option to highlight specific individuals in histograms
 
 rm(list=ls())
 
@@ -24,22 +25,33 @@ renv::restore()
 # Confirm that R is looking in the right place
 getwd()
 
+
+#### File definitions ####
 # proj_data <- read.csv("project_database.csv") # This should be a summary data file with data from numerous fish (e.g. all fish in a study)
 
-file <- "C:/GitHub/ShuttleboxR/Sys1_20240613_parcatus_rr.txt"
-data<-read.csv("data.csv")
+file <- "Sys1_20240613_parcatus_rr.txt"
+# data<-read.csv("data.csv")
+# data$date <- as.Date(data$date, format = "%d/%m/%Y")
 
-read.shuttlesoft <- function (file){
+metadata<-read.csv("additional_data.csv", na.strings = c("NaN", ""))
+
+
+#### Read shuttlesoft files function ####
+
+# Collect existing information into one data file:
+# date, time, zone, INCR_T, DECR_T, coordinates/distance, pixel ratio, trial_start, mass, a_value, b_value, acclimation temp
+
+read.shuttlesoft <- function (file, metadata, multidat = F){
   # Load .txt data file that shuttlesoft produces into R
   # Don't load headers, because the additional info at the top of the .txt file will make a confusing dataframe
   # Rename data columns
   data<-read.delim(file,
                    header = F,
-                   col.names = (c("time", "zone", "core_T", "Tpref_loligo", "INCR_temp",
-                                  "DECR_temp", "x_pos", "y_pos", "velocity", "distance", "time_in_INCR", "time_in_DECR",
-                                  "delta_temp", "dyn_hysteresis", "stat_temp_INCR", "stat_hyst_INCR", "stat_temp_DECR",
-                                  "stat_hyst_DECR", "k", "max_temp", "min_temp", "change_rate", "avoid_temp_upper_avg_loligo",
-                                  "Unknown_1_loligo", "Unknown_2_loligo", "Unknown_3_loligo")),
+                   col.names = (c("time", "zone", "core_T", "Tpref_loligo", "INCR_T",
+                                  "DECR_T", "x_pos", "y_pos", "velocity", "distance", "time_in_INCR", "time_in_DECR",
+                                  "delta_T", "dyn_hysteresis", "stat_T_INCR", "stat_hyst_INCR", "stat_T_DECR",
+                                  "stat_hyst_DECR", "k", "max_T", "min_T", "change_rate", "avoidance_upper",
+                                  "avoidance_upper_core", "avoidance_lower", "avoidance_lower_core")),
 
                    na.strings = c("NaN", ""))
   
@@ -50,8 +62,8 @@ read.shuttlesoft <- function (file){
   pixel_ratio <- data$zone[data$time == "Pixel Ratio [cm/pix]"]
   
    # Remove the additional info and reset rownames
-  data<-data[!is.na(data$INCR_temp), ]
-  numeric_rows <- !is.na(suppressWarnings(as.numeric(data$INCR_temp)))
+  data<-data[!is.na(data$INCR_T), ]
+  numeric_rows <- !is.na(suppressWarnings(as.numeric(data$INCR_T)))
   data<-data[numeric_rows, ]
   rownames(data)<-NULL 
   
@@ -61,44 +73,10 @@ read.shuttlesoft <- function (file){
   
   # Add the date of the trial by extracting it from the filecreated object
   data$date <- as.Date(filecreated)
- 
-  data = subset(data, select = -c(k, Tpref_loligo, avoid_temp_upper_avg_loligo, Unknown_1_loligo, Unknown_2_loligo, Unknown_3_loligo))
+  fileID <- gsub(paste0("^", getwd(), "/?"), "", file)
+  data$fileID <- fileID
   
-  return(data)
-}
-
-data <- read.shuttlesoft(file)
-
-metadata<-read.csv("additional_data.csv", na.strings = c("NaN", ""))
-
-#### Function to prepare data file for further processing and detect shuttles ####
-
-file_prepare <- function(data, filename, metadata, multidat = F) {
-  
-  # Add time in seconds and hours assuming a sampling frequency of 1 Hz
-  data$time_sec <- seq(0, by = 1, length.out = nrow(data))
-  data$time_h <- data$time_sec / 3600
-  
-  
-  # Make sure the date is correct in case the experiment goes on past midnight
-  # Extract the second when the experiment passed midnight
-  # Make all observations past that date the next day
-  midnight_observation <- data$time_sec[data$time == "00:00:00"]
-  if(length(midnight_observation)>0){
-    data$date<-ifelse(data$time_sec>=midnight_observation, 
-                      data$date+1, 
-                      data$date)
-  }
-  
-  # Create datetime object
-  data$datetime<-as.POSIXct(paste(data$date, data$time), format = "%Y-%m-%d %H:%M:%S")
-  
-  
-  
-  # Add a column that tells you whether the system is in static or dynamic
-  if ("delta_temp" %in% colnames(data))  data$dyn_stat <- ifelse(is.na(data$delta_temp), "static", "dynamic")
-
-trialstart <-  function(metadata){
+  trialstart <-  function(metadata){
     
     if (missing(metadata)) {
       trial_start <- data$time[1]
@@ -126,21 +104,98 @@ trialstart <-  function(metadata){
         message("Warning: One or more entries in trial_start are not in an hh:mm:ss format")
       }
       
-      if(!("trial_start" %in% names(metadata))|is.na(metadata$trial_start[metadata$file_name==filename])){
+      if(!("trial_start" %in% names(metadata))|is.na(metadata$trial_start[metadata$file_name==fileID])){
         trial_start <- data$time[1]
       }else {
-        # filename <- gsub(paste0("^", getwd(), "/?"), "", file)
-        trial_start<-metadata$trial_start[metadata$file_name==filename]
+        trial_start<-metadata$trial_start[metadata$file_name==fileID]
       }
     }
     return(trial_start)}
+  
+  if (multidat) {
+    data$trial_start <- suppressWarnings(trialstart (metadata = metadata))} else {
+      data$trial_start <- trialstart(metadata = metadata)}
+ 
+  data$a_value <- NA
+  data$b_value <- NA
+  data$mass <- NA
+  data$initial_T <- NA
+  data$a_value <- metadata$a_value[metadata$file_name == fileID]
+  data$b_value <- metadata$b_value[metadata$file_name == fileID]
+  data$mass <- metadata$mass[metadata$file_name == fileID]
+  data$initial_T <- metadata$initial_T[metadata$file_name == fileID] 
+  
+  # # Remove unnecessary columns
+  # data = subset(data, select = -c(k, Tpref_loligo, avoidance_upper, avoidance_upper_core, avoidance_lower, avoidance_lower_core))
+  
+  # # Reorder columns
+  # col_order <- c("date", "time", "zone", "INCR_T", "DECR_T", "core_T",  "x_pos", "y_pos", "velocity", "distance",
+  #                "time_in_INCR", "time_in_DECR", "max_T", "min_T", "change_rate", "delta_T", "dyn_hysteresis", "stat_T_INCR", "stat_hyst_INCR", "stat_T_DECR",
+  #                "stat_hyst_DECR", "trial_start", "a_value", "b_value", "mass", "initial_T", "pixel_ratio", "notes")
+  # data <- data[, col_order]
+  
+  return(data)
+}
 
-if (multidat) {
-trial_start <- suppressWarnings(trialstart (metadata = metadata))} else {
-   trial_start <- trialstart(metadata = metadata)}
+data <- read.shuttlesoft(file, metadata)
+
+#### Inspect data function ####
+inspect <- function(data){
+  
+  if(!all(c("date", "time", "zone", "INCR_T", "DECR_T") %in% colnames(data))){
+    stop("Dataset is missing one or more of the following necessary columns:  'date', 'time', 'zone', 'INCR_T', 'DECR_T'")
+  }
+  else if(!all(c("x_pos", "y_pos", "velocity", "distance", "time_in_INCR", "time_in_DECR",
+            "delta_T", "dyn_hysteresis", "stat_T_INCR", "stat_hyst_INCR", "stat_T_DECR",
+            "stat_hyst_DECR", "max_T", "min_T", "change_rate")%in% colnames(data))) {
+    warning("Dataset is missing one or more of the following columns:'x_pos', 'y_pos', 'velocity', 'distance', 'time_in_INCR', 'time_in_DECR', 'delta_T', 'dyn_hysteresis', 'stat_T_INCR', 'stat_hyst_INCR', 'stat_T_DECR', 'stat_hyst_DECR', 'max_T', 'min_T', 'change_rate'")
+  } else {praise()}
+   
+  
+}
+inspect(data)
+
+
+
+
+#### Function to prepare data file for further processing and detect shuttles ####
+
+file_prepare <- function(data) {
+  
+  # Add time in seconds and hours assuming a sampling frequency of 1 Hz
+  data$time_sec <- seq(0, by = 1, length.out = nrow(data))
+  data$time_h <- data$time_sec / 3600
+  
+  if (all(c("x_pos", "y_pos") %in% colnames(data))) {
+  
+  data$x_pos[data$x_pos == "No object"] <- NA
+  data$y_pos[data$y_pos == "No object"] <- NA
+  
+  data$x_pos <- as.numeric(data$x_pos)
+  data$y_pos <- as.numeric(data$y_pos)
+  }
+  
+  # Make sure the date is correct in case the experiment goes on past midnight
+  # Extract the second when the experiment passed midnight
+  # Make all observations past that date the next day
+  if(length(unique(data$date)) == 1){
+  
+  midnight_observation <- data$time_sec[data$time == "00:00:00"]
+  if(length(midnight_observation)>0){
+    data$date<-ifelse(data$time_sec>=midnight_observation, 
+                      data$date+1, 
+                      data$date)
+  }
+  }
+  
+  # Create datetime object
+  data$datetime<-as.POSIXct(paste(data$date, data$time), format = "%Y-%m-%d %H:%M:%S")
+  
+  # Add a column that tells you whether the system is in static or dynamic
+  if ("delta_T" %in% colnames(data))  data$dyn_stat <- ifelse(is.na(data$delta_T), "static", "dynamic")
   
   # Add the phase of the experiment (e.g. acclimation and trial)
-  trial_start_second<-data$time_sec[data$time == trial_start]
+  trial_start_second<-data$time_sec[data$time == data$trial_start]
   data$trial_phase<-ifelse(data$time_sec>=trial_start_second, "trial", "acclimation")
   
   # Detect a shuttle (chamber side change) in new column
@@ -156,64 +211,74 @@ trial_start <- suppressWarnings(trialstart (metadata = metadata))} else {
   # Ensure the shuttle column is numeric
   data$shuttle <- as.numeric(data$shuttle)
   
+  # Check if necessary columns exist in the data. If not, return NA for those columns
+  
+  if (!any(c("x_pos", "y_pos", "distance") %in% colnames(data))) {
+    warning("The dataset does not contain a 'distance' column nor 'x_pos' and 'y_pos' to calculate 'distance', adding empty column")
+    data$distance <- NA
+  }
+  
+  if (!all(c("max_T", "min_T") %in% colnames(data))) {
+    warning("The dataset does not contain 'min_T' and/or 'max_T' columns, adding empty columns")
+    data$min_T <- NA
+    data$max_T <- NA
+  }
+  
   data<-type.convert(data, as.is = T)
-  
-  col_order <- c("datetime", "date", "time", "time_sec", "time_h", "zone", "INCR_temp", "DECR_temp", "core_T",  "x_pos", "y_pos", "velocity", "distance",
-                 "time_in_INCR", "time_in_DECR", "shuttle", "trial_phase", "dyn_stat","delta_temp", "dyn_hysteresis", "stat_temp_INCR", "stat_hyst_INCR", "stat_temp_DECR",
-                 "stat_hyst_DECR", "max_temp", "min_temp", "change_rate", "pixel_ratio", "notes")
-  data <- data[, col_order]
-  
+  data$datetime<-as.POSIXct(data$datetime)
   return(data)
 }
 
-data <- file_prepare(data, filename = "Sys2_20240616_cunipinna_xx.txt", metadata = metadata)
+data <- file_prepare(data)
 
 #### Function to calculate body core temperature if not already done in Shuttlesoft ####
 
-calc_core_body_temp <- function(data, BM, a_value, b_value, initial_temp) {
+calc_coreT <- function(data) {
   
   # Initialize the core_T column
-  if (!missing(initial_temp) & !is.na(initial_temp)) {
+  if ("initial_T" %in% colnames(data) && any(!is.na(data$initial_T))) {
     data$core_T <- NA
-    data$core_T[1] <- initial_temp} else {
+    data$core_T[1] <- unique(data$initial_T)} else {
     if(!"core_T" %in% colnames(data) || all(is.na(data[["core_T"]])))
     stop("Initial temperature not defined, cannot calculate core body temperature")
     }
   
   # Ensure necessary columns exist
-  if (!"shuttle" %in% colnames(data)) {
-    stop("The dataset does not contain one or more necessary columns: 'shuttle'.")
+  if (!any(c("a_value", "b_value", "mass", "shuttle") %in% colnames(data))) {
+    stop("The dataset does not contain one or more necessary columns: 'a_value', 'b_value', 'mass','shuttle'.")
   }
   
   #Ensure necessary columns are in the right format
-  if (!all(is.numeric(c(data$core_T, data$shuttle)))){
+  if (!all(is.numeric(c(data$a_value, data$b_value, data$mass, data$core_T, data$shuttle)))){
     stop("One or more necessary variables are not in the right format")
   }
-
-  k <- a_value * BM^b_value
   
-  data$ambient_temp<-ifelse(data$zone == "INCR", data$INCR_temp, data$DECR_temp)
+  if (any(c(length(unique(data$a_value)),length(unique(data$b_value)), length(unique(data$mass)))>1)){
+    stop("One or more of the following parameters have more than 1 value: 'a_value', 'b_value', 'mass' ")
+  }
+
+  a_value <- unique(data$a_value)
+  b_value <- unique(data$b_value)
+  mass <- unique(data$mass)
+  
+  k <- a_value * mass^b_value
+  
+  data$ambient_T<-ifelse(data$zone == "INCR", data$INCR_T, data$DECR_T)
   
   # Calculate body core temperature from second to second
   for (i in 2:nrow(data)) {
     if (data$shuttle[i] == 1) {
       data$core_T[i] <- data$core_T[i-1]  # Carry forward the body core temperature at the moment of shuttling
     } else {
-      data$core_T[i] <- data$ambient_temp[i] + 
-        (data$core_T[i-1] - data$ambient_temp[i]) * exp(-k * 1 / 60)
+      data$core_T[i] <- data$ambient_T[i] + 
+        (data$core_T[i-1] - data$ambient_T[i]) * exp(-k * 1 / 60)
     }
   }
   
   return(data)
 }
 
-# # Example usage
-BM <- 30  # Example body mass
-a_value <- 3.690
-b_value <- -0.574
-# Calculate core body temperature
-data <- calc_core_body_temp(data = data, BM = BM, a_value = a_value, b_value = b_value, initial_temp = 27)
-
+data <- calc_coreT(data)
 
 #### Function to calculate Tpref using either the mean or median of all body core temperature values ####
 
@@ -242,8 +307,9 @@ calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start
   
   if (print_results) {
   print(paste("Tpref:", Tpref))
-  return(Tpref)
   }
+  return(Tpref)
+
 }
 
 # Example usage
@@ -285,37 +351,39 @@ Tavoid_values <-calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_min
 
 #### Function to calculate total distance moved ####
 
-calc_distance1 <- function(data){
-  data$x_pos[data$x_pos == "No object"] <- NA
-  data$y_pos[data$y_pos == "No object"] <- NA
-  
-  data$x_pos <- as.numeric(data$x_pos)*data$pixel_ratio
-  data$y_pos <- as.numeric(data$y_pos)*data$pixel_ratio
-  
-  data$delta_distance <- NA
-  data$delta_distance [1] <- 0
-  
-  for (i in 2:nrow(data)) {
-    data$delta_distance[i] <- sqrt((data$x_pos[i] - data$x_pos[i-1])^2 + (data$y_pos[i]-data$y_pos[i-1])^2)
-  }
-  data$delta_distance[is.na(data$delta_distance)]<-0
-  
-  data$cum_dist <- 0
-  for (i in 2:nrow(data)){
-    data$cum_dist[i]<- data$cum_dist[i-1]+data$delta_distance[i-1]
-  }
-  
-  data = subset(data, select = -c(delta_distance))
-  return(data)
-  
-}
+# calc_distance1 <- function(data){
+#   data$x_pos[data$x_pos == "No object"] <- NA
+#   data$y_pos[data$y_pos == "No object"] <- NA
+#   
+#   data$x_pos <- as.numeric(data$x_pos)*data$pixel_ratio
+#   data$y_pos <- as.numeric(data$y_pos)*data$pixel_ratio
+#   
+#   data$delta_distance <- NA
+#   data$delta_distance [1] <- 0
+#   
+#   for (i in 2:nrow(data)) {
+#     data$delta_distance[i] <- sqrt((data$x_pos[i] - data$x_pos[i-1])^2 + (data$y_pos[i]-data$y_pos[i-1])^2)
+#   }
+#   data$delta_distance[is.na(data$delta_distance)]<-0
+#   
+#   data$cum_dist <- 0
+#   for (i in 2:nrow(data)){
+#     data$cum_dist[i]<- data$cum_dist[i-1]+data$delta_distance[i-1]
+#   }
+#   
+#   data = subset(data, select = -c(delta_distance))
+#   
+#   
+#   return(data)
+#   
+# }
 
-data<-calc_distance1(data)
+# data<-calc_distance1(data)
 
-calc_distance2 <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
+calc_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
   # Ensure the Distance moved column exists
   if (!"distance" %in% colnames(data)) {
-    stop("The dataset does not contain a 'distance' column. Please run file_prepare function.")
+    stop("The dataset does not contain a 'distance' column")
   }
   
   # Convert exclude minutes to seconds
@@ -341,7 +409,7 @@ calc_distance2 <- function(data, exclude_start_minutes = 0, exclude_end_minutes 
 }
 
 # Example usage
-# dist <- calc_distance(data, 60.45)
+dist <- calc_distance(data)
 
 #### Function to calculate shuttling frequency ####
 
@@ -371,7 +439,7 @@ calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_en
 }
 
 # Example usage
-cal_shut_freq <- calc_shuttling_frequency(data, exclude_start_minutes = 240, exclude_end_minutes = 5)
+shut_freq <- calc_shuttling_frequency(data)
 
 #### Function to calculate occupancy time in each chamber ####
 
@@ -403,7 +471,7 @@ calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_min
 }
 
 # Example usage
-# occ_time <- calc_occupancy_time(data)
+occ_time <- calc_occupancy_time(data)
 
 #### Function to plot a histogram of time spent at different core body temperatures ####
 
@@ -412,7 +480,7 @@ library(ggplot2)
 plot_core_T_histogram <- function(data, bin_size, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure the body core temperature column exists
   if (!"core_T" %in% colnames(data)) {
-    stop("The dataset does not contain a 'core_T' column. Please run file_prepare and calc_core_body_temp")
+    stop("The dataset does not contain a 'core_T' column. Please run file_prepare and calc_coreT")
   }
   
   # Convert time_sec to numeric if not already
@@ -438,7 +506,7 @@ plot_core_T_histogram <- function(data, bin_size, exclude_start_minutes = 0, exc
   # Create the histogram plot
   hist_plot <- ggplot(data, aes(x = core_T)) +
     geom_histogram(binwidth = bin_size, aes(y = (..count.. / sum(..count..)) * 100), fill = "#F79518", color = "black") +
-    geom_vline(xintercept = Tpref_peak, color = "#9EF1A4", linetype = "dashed", size = 2) +
+    geom_vline(xintercept = Tpref_peak, color = "#9EF1A4", linetype = "dashed", linewidth = 2) +
     labs(title = "Histogram of Percent of Time Spent at Different Body Core Temperatures",
          subtitle = paste("Peak Tpref:", round(Tpref_peak, 2), "°C"),
          x = "Body Core Temperature (°C)",
@@ -451,7 +519,7 @@ plot_core_T_histogram <- function(data, bin_size, exclude_start_minutes = 0, exc
   return(Tpref_peak)
 }
 
-# Example usage
+# # Example usage
 # Tpref_peak <- plot_core_T_histogram(data, bin_size = 0.1, exclude_start_minutes = 240, exclude_end_minutes = 5)
 # print(paste("Peak Tpref:", Tpref_peak))
 
@@ -460,7 +528,7 @@ plot_core_T_histogram <- function(data, bin_size, exclude_start_minutes = 0, exc
 calc_variance <- function(data, variance_type = c("std_error", "std_deviation", "coeff_variation"), exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure the body core temperature column exists
   if (!"core_T" %in% colnames(data)) {
-    stop("The dataset does not contain a 'core_T' column. Please run file_prepare and calc_core_body_temp")
+    stop("The dataset does not contain a 'core_T' column. Please run file_prepare and calc_coreT")
   }
   
   # Convert exclude minutes to seconds
@@ -488,7 +556,7 @@ calc_variance <- function(data, variance_type = c("std_error", "std_deviation", 
 }
 
 # # Example usage
-# variance_se <- calc_variance(data, variance_type = "std_error", 240, 5)
+variance_se <- calc_variance(data, variance_type = "std_error", 240, 5)
 # variance_sd <- calc_variance(data, variance_type = "std_deviation", 240, 5)
 # variance_cv <- calc_variance(data, variance_type = "coeff_variation", 240, 5)
 # 
@@ -498,63 +566,65 @@ calc_variance <- function(data, variance_type = c("std_error", "std_deviation", 
 
 #### Function to plot cumulative changes in distance moved over time ####
 
-plot_cumulative_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
-  if (!("time_sec" %in% colnames(data) && "distance" %in% colnames(data))) {
-    stop("The dataset does not contain 'time_sec' and/or 'distance' columns.")
+  plot_cumulative_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+    if (!("time_sec" %in% colnames(data) && "distance" %in% colnames(data))) {
+      stop("The dataset does not contain 'time_sec' and/or 'distance' columns.")
+    }
+    
+    # Convert time_sec to numeric if not already
+    data$time_sec <- as.numeric(data$time_sec)
+    
+    # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
+    start_time <- exclude_start_minutes * 60
+    end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
+    data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
+    
+    # Convert time in seconds to minutes
+    data$Time_min <- data$time_sec / 60
+    #substract first distance value to reset cumulative distance to 0
+    data$distance<-data$distance-data$distance[[1]]
+    
+    # Plot cumulative distance
+    plot <- ggplot(data, aes(x = Time_min, y = (distance))) +
+      geom_line() +
+      labs(title = "Cumulative Distance Moved During Trial",
+           x = "Time (minutes)",
+           y = "Distance Moved (cm)") +
+      theme_minimal()
+    
+    print(plot)
   }
-  
-  # Convert time_sec to numeric if not already
-  data$time_sec <- as.numeric(data$time_sec)
-  
-  # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
-  start_time <- exclude_start_minutes * 60
-  end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
-  
-  # Convert time in seconds to minutes
-  data$Time_min <- data$time_sec / 60
-  #substract first distance value to reset cumulative distance to 0
-  data$distance<-data$distance-data$distance[[1]]
-  
-  # Plot cumulative distance
-  plot <- ggplot(data, aes(x = Time_min, y = (distance))) +
-    geom_line() +
-    labs(title = "Cumulative Distance Moved During Trial",
-         x = "Time (minutes)",
-         y = "Distance Moved (cm)") +
-    theme_minimal()
-  
-  print(plot)
-}
 
 # Example usage
-# plot_cumulative_distance(data, 240, 5)
+plot_cumulative_distance(data, 240, 5)
 
 #### Function to calculate minimum gravitation time ####
 
-calc_min_gravitation <- function(start_temp, target_temp, rate_of_change) {
+calc_min_gravitation <- function(start_T, target_T, rate_of_change, print_results = T) {
   # Calculate the change in temperature
-  delta_temp <- target_temp - start_temp
+  delta_T <- target_T - start_T
   
   # Calculate the minimum gravitation time
-  gravitation_time <- delta_temp / (rate_of_change/60)
+  gravitation_time <- delta_T / (rate_of_change/60)
   
+  if (print_results) {
   # Print the result
   print(paste("Minimum Gravitation Time:", gravitation_time, "minutes"))
+  }
   
   return(gravitation_time)
 }
 
 # # Example usage
-# start_temp <- 20  # Starting mean temperature in °C
-# target_temp <- 25  # Target temperature in °C, e.g. approximation of anticipated Tpref
-# rate_of_change <- 5  # Rate of temperature change in °C/h
-# 
-# min_grav_time <- calc_min_gravitation(start_temp, target_temp, rate_of_change)
+start_T <- 27  # Starting mean temperature in °C
+target_T <- 35  # Target temperature in °C, e.g. approximation of anticipated Tpref
+rate_of_change <- 5  # Rate of temperature change in °C/h
+
+min_grav_time <- calc_min_gravitation(start_T, target_T, rate_of_change)
 
 #### Function to calculate time spent at extreme temperatures, near set limits ####
 
-calc_extremes <- function(data, threshold = 0.2*(max(data$max_temp)-max(data$min_temp)), exclude_start_minutes = 0, exclude_end_minutes = 0) {
+calc_extremes <- function(data, threshold = 0.2*(max(data$max_T)-max(data$min_T)), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
   # Ensure necessary columns exist
   if (!("time_sec" %in% colnames(data) && "core_T" %in% colnames(data))) {
     stop("The dataset does not contain 'time_sec' and/or 'core_T' columns.")
@@ -571,28 +641,31 @@ calc_extremes <- function(data, threshold = 0.2*(max(data$max_temp)-max(data$min
   # Convert time in secxonds to minutes
   data$Time_min <- data$time_sec / 60
   
-  upper_limit<-max(data$max_temp)
-  lower_limit<-max(data$min_temp)
+  
+  upper_limit<-max(data$max_T)
+  lower_limit<-max(data$min_T)
   
   # Determine time spent near upper and lower extreme temperatures with the threshold
   upper_threshold <- upper_limit - threshold
   lower_threshold <- lower_limit + threshold
-  data$Upper_Extreme_Temp <- ifelse(data$core_T > upper_threshold, 1, 0)
-  data$Lower_Extreme_Temp <- ifelse(data$core_T < lower_threshold, 1, 0)
+  data$Upper_Extreme_T <- ifelse(data$core_T > upper_threshold, 1, 0)
+  data$Lower_Extreme_T <- ifelse(data$core_T < lower_threshold, 1, 0)
   
-  time_near_upper_extreme <- sum(data$Upper_Extreme_Temp) / nrow(data) * 100
-  time_near_lower_extreme <- sum(data$Lower_Extreme_Temp) / nrow(data) * 100
+  time_near_upper_extreme <- sum(data$Upper_Extreme_T) / nrow(data) * 100
+  time_near_lower_extreme <- sum(data$Lower_Extreme_T) / nrow(data) * 100
   
+  if (print_results) {
   # Print the results
   print(paste("Time spent near upper extreme temperatures (%):", time_near_upper_extreme))
   print(paste("Time spent near lower extreme temperatures (%):", time_near_lower_extreme))
+  }
   
   return(c(time_near_lower_extreme, time_near_upper_extreme))
 }
 
 # # Example usage
-# extreme_time_percent <- calc_extremes(data, exclude_start_minutes = 240, exclude_end_minutes = 5)
-# calc_extremes(data, exclude_start_minutes = 0, exclude_end_minutes = 0)[2]
+extreme_time_percent <- calc_extremes(data)
+calc_extremes(data, exclude_start_minutes = 0, exclude_end_minutes = 0)[2]
 
 
 #### Function to plot histogram of movement speeds ####
@@ -685,8 +758,8 @@ plot_temperature_gradient <- function(data, exclude_start_minutes = 0, exclude_e
   
   # Plot the temperature gradient
   plot <- ggplot(data, aes(x = time_h)) +
-    geom_line(aes(y = `DECR_temp`, color = "DECR side temp")) +
-    geom_line(aes(y = `INCR_temp`, color = "INCR side temp")) +
+    geom_line(aes(y = `DECR_T`, color = "DECR side temp")) +
+    geom_line(aes(y = `INCR_T`, color = "INCR side temp")) +
     scale_color_manual(values = c("DECR side temp" = "dodgerblue", "INCR side temp" = "brown1")) +
     labs(title = "Temperature Gradient Over Time",
          x = "Time (hours)",
@@ -706,7 +779,7 @@ plot_temperature_gradient <- function(data, exclude_start_minutes = 0, exclude_e
 library(ggplot2)
 library(segmented)
 
-plot_temp_segmented <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+plot_T_segmented <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure necessary columns exist
   if (!all(c("time_h", "core_T") %in% colnames(data))) {
     stop("The dataset does not contain one or more necessary columns: 'time_h', 'core_T'.")
@@ -747,11 +820,11 @@ plot_temp_segmented <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude
   }
 
 # Example usage
-# plot_temp_segmented(data, Tpref = Tpref, Tavoid_lower, Tavoid_upper, exclude_start_minutes = 240, exclude_end_minutes = 5)
+plot_T_segmented(data, Tpref = Tpref, Tavoid_values[1], Tavoid_values[2])
 
 #### Function to plot changes in core body temperature over time, as well as Tpref, and upper and lower avoidance temperatures, but WITHOUT segmented regression lines #####
 
-plot_temp <- function(data, Tpref, Tavoid_low, Tavoid_up, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+plot_T <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure necessary columns exist
   if (!all(c("time_h", "core_T") %in% colnames(data))) {
     stop("The dataset does not contain one or more necessary columns: 'time_h', 'core_T'.")
@@ -780,13 +853,13 @@ plot_temp <- function(data, Tpref, Tavoid_low, Tavoid_up, exclude_start_minutes 
 }
 
 # Example usage
-# plot_temp(data, Tpref, Tavoid_low, Tavoid_up, exclude_start_minutes = 240, exclude_end_minutes = 5)
+plot_T(data, Tpref, Tavoid_values[1], Tavoid_values[2])
 
 ##### Function to calculate actual gravitation time ####
 
 library(segmented)
 
-calc_act_gravitation <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+  calc_act_gravitation <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
   
   # Convert the time to numeric if not already
   data$time_sec <- as.numeric(data$time_sec)
@@ -814,13 +887,15 @@ calc_act_gravitation <- function(data, exclude_start_minutes = 0, exclude_end_mi
   # Assume the first breakpoint as the gravitation time
   gravitation_time <- breakpoints[1]
   
+  if (print_results) {
   print(paste("Gravitation Time (hours):", gravitation_time))
+  }
   
   return(gravitation_time)
 }
 
 # Calculate gravitation time
-# act_grav_time <- calc_act_gravitation(data)
+act_grav_time <- calc_act_gravitation(data)
 
 ##### Function to calculate and plot interval means for shuttling rate over time ####
 
@@ -868,7 +943,7 @@ shuttling_aggregated <- function(data, interval_minutes = 10, exclude_start_minu
 }
 
 # Example usage
-# shuttling_rate <- shuttling_aggregated(data, interval_minutes = 60, exclude_start_minutes = 240, exclude_end_minutes = 5)
+shuttling_rate <- shuttling_aggregated(data, interval_minutes = 60)
 
 ##### Function to calculate and plot interval means for speed over time ####
 
@@ -916,7 +991,7 @@ speed_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes 
 }
 
 # Example usage
-# movement_speed <- speed_aggregated(data, interval_minutes = 60, exclude_start_minutes = 240, exclude_end_minutes = 5)
+movement_speed <- speed_aggregated(data, interval_minutes = 60, exclude_end_minutes = 5)
 
 ##### Function to calculate and plot interval means for body core temperature over time ####
 
@@ -964,7 +1039,7 @@ Tcore_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes 
 }
 
 # Example usage
-# Tcore_agg <- Tcore_aggregated(data, interval_minutes = 60, exclude_start_minutes = 10, exclude_end_minutes = 5)
+Tcore_agg <- Tcore_aggregated(data, interval_minutes = 60, exclude_start_minutes = 10, exclude_end_minutes = 5)
 
 ##### Function to calculate interval means for speed, shuttling rate, and Tcore, then produces a correlation matrix ####
 
@@ -1035,11 +1110,14 @@ mean_correlations_scatterplots <- function(data, interval_minutes = 10, exclude_
   return(list(summary_data = summary_data, correlation_matrix = correlation_matrix, plots = list(plot1, plot2, plot3)))
 }
 
-# # Example usage
-# results <- mean_correlations_scatterplots(data, interval_minutes = 10, exclude_start_minutes = 10, exclude_end_minutes = 5)
-# summary_data <- results$summary_data
-# correlation_matrix <- results$correlation_matrix
-# plots <- results$plots
+# Example usage
+results <- mean_correlations_scatterplots(data, interval_minutes = 10, exclude_start_minutes = 10, exclude_end_minutes = 5)
+summary_data <- results$summary_data
+correlation_matrix <- results$correlation_matrix
+plots <- results$plots
+
+correlation_matrix
+
 
 # results
 ##### Function to plot a 3D animation of fish movements at selected time intervals, with time as a dimension ####
@@ -1076,7 +1154,7 @@ animate_movements <- function(data, exclude_start_minutes = 0, exclude_end_minut
 }
 
 # Example usage
-# animate_movements(data, exclude_start_minutes = 900, exclude_end_minutes = 5)
+# animate_movements(data, exclude_end_minutes = 5)
 
 ##### Function to produce a heat map of fish locations over the trial ####
 
@@ -1110,8 +1188,8 @@ plot_heatmap <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 
 }
 
 # Example usage
-# heatmap_plot <- plot_heatmap(data, exclude_start_minutes = 240, exclude_end_minutes = 0)
-# print(heatmap_plot)
+heatmap_plot <- plot_heatmap(data)
+print(heatmap_plot)
 
 ##### Function to visualise links between shuttling and activity across individuals in the entire project dataset ####
 
@@ -1136,7 +1214,7 @@ plot_distance_vs_shuttles <- function(proj_data) {
 }
 
 # Example usage
-# plot_distance_vs_shuttles(proj_data)
+plot_distance_vs_shuttles(proj_data)
 
 ##### Function to visualise links between time near system temperature limits and activity across individuals in the entire project dataset ####
 
@@ -1236,12 +1314,12 @@ pca_and_plot <- function(proj_data) {
 }
 
 # # Example usage
-# results <- pca_and_plot(proj_data)
-# pca_result <- results$pca_result
-# scores <- results$scores
-# loadings <- results$loadings
+results <- pca_and_plot(proj_data)
+pca_result <- results$pca_result
+scores <- results$scores
+loadings <- results$loadings
 # 
-# loadings
+loadings
 ##### Function to create frequency distributions for key measures across individuals in the data set ####
 
 library(ggplot2)
@@ -1292,7 +1370,8 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
 }
 
 # Example usage
-# multipanel_plot <- plot_histograms(proj_data)
+multipanel_plot <- plot_histograms(proj_data)
+
 
 
 #### COMPILE PROJ_DATA FILE ####
@@ -1301,40 +1380,11 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
 
 # TO DO
 # fix Tpref
-# fix filename
+# fix fileID
 
-compile_project_data <- function(directory = getwd(), 
-                                 metadata,
-                                 print_results = F,
-                                 silence_warnings = T,
-                                 exclude_acclimation = F,
-                                 exclude_start_minutes = 0, 
-                                 exclude_end_minutes = 0,
-                                 Tpref_method = "median",
-                                 Tavoid_percintiles = c(0.05, 0.95),
-                                 textremes_threshold = expression(0.2 * (max(df$max_temp) - max(df$min_temp))),
-                                 core_T_variance_type = "std_error"){
+read.shuttlesoft.project <- function (metadata, directory = getwd()){
   
-  # Search for all the .txt files in the specified directory
-  txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
-  
-  # Read those text files and compile them into a list
-  data_read <- lapply(txt_files, read.delim, header = F,
-                      col.names = (c("time", "zone", "core_T", "Tpref_loligo", "INCR_temp",
-                                     "DECR_temp", "x_pos", "y_pos", "velocity", "distance", "time_in_INCR", "time_in_DECR",
-                                     "delta_temp", "dyn_hysteresis", "stat_temp_INCR", "stat_hyst_INCR", "stat_temp_DECR",
-                                     "stat_hyst_DECR", "k", "max_temp", "min_temp", "change_rate", "avoid_temp_upper_avg",
-                                     "Unknown_1_loligo", "Unknown_2_loligo", "Unknown_3_loligo")),
-                      
-                      na.strings = c("NaN", ""))
-  
-  # Name each list element as the directory and filename of the text files
-  names(data_read)<-txt_files
-  
-  # Prepare the data using file_prepare. Multidat is TRUE because this will suppress warnings from preparing each data file separately
-  data_list <- lapply(data_read, file_prepare, multidat = T)
-  
-  # Check if metadata is specified and igive warnings for what happens if data is missing
+  # Check if metadata is specified and give warnings for what happens if data is missing
   if (missing(metadata)) {
     warning("Metadata not provided; cannot define one or more of the following variables: 'trial_start', 'a-value', 'b-value', 'initial_temp.'")
   } else {
@@ -1361,6 +1411,33 @@ compile_project_data <- function(directory = getwd(),
     }
   }
   
+  # Search for all the .txt files in the specified directory
+  txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
+  
+  # Read those text files and compile them into a list
+  data_read <- lapply(txt_files, read.shuttlesoft, metadata = metadata, multidat = T)
+  
+  # Name each list element as the directory of the text files
+  names(data_read)<-txt_files
+  
+  return(data_read)
+}
+
+data_read<-read.shuttlesoft.project(metadata)
+
+compile_project_data <- function(data_read,
+                                 exclude_acclimation = F,
+                                 exclude_start_minutes = 0, 
+                                 exclude_end_minutes = 0,
+                                 Tpref_method = "median",
+                                 Tavoid_percintiles = c(0.05, 0.95),
+                                 textremes_threshold = expression(0.2 * (max(df$max_T) - max(df$min_T))),
+                                 core_T_variance_type = "std_error"){
+  
+  # Prepare the data using file_prepare. Multidat is TRUE because this will suppress warnings from preparing each data file separately
+  data_list <- lapply(data_read, file_prepare)
+
+  
   # Create a function that pulls all the information from a datafile in one go, using the functions specified earlier 
   apply_functions <- function(df, df_name,
                               exc_accl = exclude_acclimation,
@@ -1369,39 +1446,30 @@ compile_project_data <- function(directory = getwd(),
                               Tpref_met = Tpref_method,
                               Tavoid_perc = Tavoid_percintiles,
                               textremes_th = eval(textremes_threshold),
-                              Tcore_variance = core_T_variance_type,
-                              metadat = metadata) {
+                              Tcore_variance = core_T_variance_type) {
     
-    # Define the filename the function is currently considering
-    filename <- gsub(paste0("^", directory, "/?"), "", df_name)
+    # Define the fileID the function is currently considering
+    fileID <- unique(df$fileID)
     
-    # Define constants to calculate core body temperature using the information in metadata that matches the filename
-    if (!is.null(metadata)){
-      a_value <- subset(metadata, file_name == filename, select = a_value)[[1]]
-      b_value <- subset(metadata, file_name == filename, select = b_value)[[1]]
-      BM <- subset(metadata, file_name == filename, select = mass)[[1]]
-      initial_temp <- subset(metadata, file_name == filename, select = initial_temp)[[1]]
-      
-      # Calculate core body temperature
-      df<-calc_core_body_temp(df, BM, a_value, b_value, initial_temp)
-    }
-    
+    # Calculate core body temperature
+    df<-calc_coreT(df)
+
     # Exclude acclimation period if requested from the start. Acclimation period is defined in file_prepare
     ifelse(exclude_acclimation == T, df<-subset(df, df$trial_phase != "acclimation"), df)
     
     # Calculate all variables using default settings (these can be edited in the main function)
-    Tpref <- calc_Tpref(df, method = Tpref_met, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
-    grav_time <- calc_act_gravitation(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
-    distance <- calc_distance(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
-    Tavoid <- calc_Tavoid(df, percentiles = Tavoid_perc, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
+    Tpref <- calc_Tpref(df, method = Tpref_met, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
+    grav_time <- calc_act_gravitation(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
+    distance <- calc_distance(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
+    Tavoid <- calc_Tavoid(df, percentiles = Tavoid_perc, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
     Tpref_range <- Tavoid[2]-Tavoid[1]
-    textremes <- calc_extremes(df, threshold = textremes_th, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
+    textremes <- calc_extremes(df, threshold = textremes_th, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
     core_T_variance <- calc_variance(df, variance_type = Tcore_variance, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
-    nr_shuttles <- calc_shuttling_frequency(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
-    chamber_seconds <- calc_occupancy_time(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
+    nr_shuttles <- calc_shuttling_frequency(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
+    chamber_seconds <- calc_occupancy_time(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
     
     # Return a list of the variables you want
-    return(list(filename = filename,
+    return(list(fileID = fileID,
                 Tpref = Tpref,
                 Tpref_range = Tpref_range,
                 grav_time = grav_time, 
@@ -1413,18 +1481,15 @@ compile_project_data <- function(directory = getwd(),
                 chamber_seconds = chamber_seconds))
   }
   
-  # All the functions will produce some printed text. To prevent that from happening to each dataframe, print_results should be TRUE
-  if (print_results == F) sink(tempfile())
-  
   # Apply functions to each dataframe in the list and collect results
   results <- do.call(rbind, lapply(names(data_list), function(name) {
     
     # Apply the functions
-    func_results <- apply_functions(data_list[[name]], name)
+    func_results <- apply_functions(df = data_list[[name]], df_name = name)
     
     # Combine results into a data frame
     data.frame(
-      filename = func_results$filename,
+      fileID = func_results$fileID,
       Tpref = func_results$Tpref,
       Tpref_range = func_results$Tpref_range,
       grav_time  = func_results$grav_time,
@@ -1442,18 +1507,15 @@ compile_project_data <- function(directory = getwd(),
     
   }))
   
-  if (print_results == F) sink()
-  
   # Reset rownames as they have acquired names from the list
   rownames(results) <- NULL
   
   return(results)
 }
 
-results<-compile_project_data(print_results = F, exclude_acclimation = F, metadata = metadata)
+results<-compile_project_data(data_read, exclude_acclimation = F)
 
 calc_Tpref(data, method = "median")
-calc_Tpref_range(data)
 calc_act_gravitation(data)
 calc_distance(data)
 Tavoid<-calc_Tavoid(data)
