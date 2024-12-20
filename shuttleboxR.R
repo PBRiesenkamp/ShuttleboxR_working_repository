@@ -7,7 +7,8 @@
 
 
 # TO DO:  
-  # Edit inspect function for non shuttlesoft data to check it contains the right data
+  # Edit inspect function for non shuttlesoft data to check if it contains the right data
+  # Write inspect.project function?
   # Add acclimation exclusion to each function
   # Remove dependencies as much as possible
     # Check if segmented regression can be done without segmented package
@@ -27,13 +28,20 @@ getwd()
 
 
 #### File definitions ####
-# proj_data <- read.csv("project_database.csv") # This should be a summary data file with data from numerous fish (e.g. all fish in a study)
+proj_data <- read.csv("project_database.csv") # This should be a summary data file with data from numerous fish (e.g. all fish in a study)
 
-file <- "Sys1_20240613_parcatus_rr.txt"
+file <- "C:/GitHub/ShuttleboxR/Glasgow_2011/Fish_1_13_3.txt"
 # data<-read.csv("data.csv")
 # data$date <- as.Date(data$date, format = "%d/%m/%Y")
 
-metadata<-read.csv("additional_data.csv", na.strings = c("NaN", ""))
+metadata_test<-read.csv("additional_data.csv", na.strings = c("NaN", ""))
+
+metadata_glasgow<-read.delim("C:/GitHub/ShuttleboxR/Glasgow_2011/metadata/Fish_meta_data1.1.txt")
+colnames(metadata_glasgow)<-c("file_name", "initial_temp", "feed_level", "fasting_period", "sb_size", "side_config", "total_length", "mass")
+# metadata_glasgow$trial_start <- NA
+metadata_glasgow$file_name <- paste0(metadata_glasgow$file_name, ".txt")
+metadata_glasgow$a_value <- 3.69
+metadata_glasgow$b_value <- -0.574
 
 
 #### Read shuttlesoft files function ####
@@ -57,7 +65,11 @@ read.shuttlesoft <- function (file, metadata, multidat = F){
   
   # Extract notes, the file created info and the pixel ratio from the dataframe
   data<-data[!is.na(data$time), ]
-  notes <- data$zone[data$time == "Notes"]
+  if (length(data$zone[data$time == "Notes"]) == 0 || is.na(data$zone[data$time == "Notes"])) {
+    notes <- NA
+    }else{
+      notes <- data$zone[data$time == "Notes"]
+    }
   filecreated <- as.POSIXct(data$zone[data$time == "File created"], format = "%d/%m/%Y; %H:%M")
   pixel_ratio <- data$zone[data$time == "Pixel Ratio [cm/pix]"]
   
@@ -73,7 +85,7 @@ read.shuttlesoft <- function (file, metadata, multidat = F){
   
   # Add the date of the trial by extracting it from the filecreated object
   data$date <- as.Date(filecreated)
-  fileID <- gsub(paste0("^", getwd(), "/?"), "", file)
+  fileID <- basename(file)
   data$fileID <- fileID
   
   trialstart <-  function(metadata){
@@ -85,11 +97,11 @@ read.shuttlesoft <- function (file, metadata, multidat = F){
       
       # If the metadata is present, ensure necessary columns exist in the metadata
       if (!all(c("file_name", "trial_start", "mass", "a_value", "b_value") %in% colnames(metadata))) {
-        warning("The metadata does not contain one or more necessary columns: 'file_name', 'trial_start', 'mass', 'a_value', 'b_value'.")
+        warning("The metadata does not contain one or more valuable columns: 'file_name', 'trial_start', 'mass', 'a_value', 'b_value'.")
       }
       
       # Find rows with NA in specified columns
-      columns_to_check <- c("file_name", "trial_start", "mass", "a_value", "b_value")
+      columns_to_check <- intersect(c("file_name", "trial_start", "mass", "a_value", "b_value"), colnames(metadata))
       rows_with_na <- apply(metadata[columns_to_check], 1, function(row) any(is.na(row)))
       
       # If there are any rows with NA, throw a warning mentioning file names
@@ -104,7 +116,9 @@ read.shuttlesoft <- function (file, metadata, multidat = F){
         message("Warning: One or more entries in trial_start are not in an hh:mm:ss format")
       }
       
-      if(!("trial_start" %in% names(metadata))|is.na(metadata$trial_start[metadata$file_name==fileID])){
+      if(!("trial_start" %in% colnames(metadata))){
+        trial_start <- data$time[1]
+      }else if("trial_start" %in% colnames(metadata) && any(is.na(metadata$trial_start))){
         trial_start <- data$time[1]
       }else {
         trial_start<-metadata$trial_start[metadata$file_name==fileID]
@@ -137,10 +151,12 @@ read.shuttlesoft <- function (file, metadata, multidat = F){
   return(data)
 }
 
-data <- read.shuttlesoft(file, metadata)
+data <- read.shuttlesoft(file, metadata_glasgow)
 
 #### Inspect data function ####
 inspect <- function(data){
+  
+  library(praise)
   
   if(!all(c("date", "time", "zone", "INCR_T", "DECR_T") %in% colnames(data))){
     stop("Dataset is missing one or more of the following necessary columns:  'date', 'time', 'zone', 'INCR_T', 'DECR_T'")
@@ -153,7 +169,7 @@ inspect <- function(data){
    
   
 }
-inspect(data)
+# inspect(data)
 
 
 
@@ -314,7 +330,7 @@ calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start
 
 # Example usage
 # 
-Tpref <- calc_Tpref(data, method = "median", exclude_start_minutes = 0, exclude_end_minutes = 0)
+# Tpref <- calc_Tpref(data, method = "median", exclude_start_minutes = 0, exclude_end_minutes = 0)
 # 
 # print(Tpref)
 
@@ -347,40 +363,49 @@ calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes
 # Example usage
 # Calculate Tavoid values
 
-Tavoid_values <-calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = F)
+# Tavoid_values <-calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = F)
 
 #### Function to calculate total distance moved ####
 
-# calc_distance1 <- function(data){
-#   data$x_pos[data$x_pos == "No object"] <- NA
-#   data$y_pos[data$y_pos == "No object"] <- NA
-#   
-#   data$x_pos <- as.numeric(data$x_pos)*data$pixel_ratio
-#   data$y_pos <- as.numeric(data$y_pos)*data$pixel_ratio
-#   
-#   data$delta_distance <- NA
-#   data$delta_distance [1] <- 0
-#   
-#   for (i in 2:nrow(data)) {
-#     data$delta_distance[i] <- sqrt((data$x_pos[i] - data$x_pos[i-1])^2 + (data$y_pos[i]-data$y_pos[i-1])^2)
-#   }
-#   data$delta_distance[is.na(data$delta_distance)]<-0
-#   
-#   data$cum_dist <- 0
-#   for (i in 2:nrow(data)){
-#     data$cum_dist[i]<- data$cum_dist[i-1]+data$delta_distance[i-1]
-#   }
-#   
-#   data = subset(data, select = -c(delta_distance))
-#   
-#   
-#   return(data)
-#   
-# }
+calc_distance <- function(data, pixel_to_cm = T){
+  
+  # If coordinates are missing, make them the last known coordinate
+  for (i in 2:nrow(data)) {
+    if(is.na(data$x_pos[i])) data$x_pos[i]<-data$x_pos[i-1]
+    if(is.na(data$y_pos[i])) data$y_pos[i]<-data$y_pos[i-1]
+  }
+  
+  #Initialise the velocity column
+  data$velocity<-NA
+  
+  # Calculate the distance covered in each observation (velocity) using Pythagoras
+  for (i in 2:nrow(data)) {
+    data$velocity[i] <- sqrt((data$x_pos[i] - data$x_pos[i-1])^2 + (data$y_pos[i]-data$y_pos[i-1])^2)
+  }
+  
+  # Change any NA velocities to zero
+  data$velocity[is.na(data$velocity)]<-0
+  
+  # If the coordinates are specified in pixels rather than cm, convert
+  if (pixel_to_cm){
+    data$velocity <- data$pixel_ratio*data$velocity
+  }
+  
+  #Initialise the distance column
+  data$distance <- 0
+  
+  # Calculate cumulative distance
+  for (i in 2:nrow(data)){
+    data$distance[i]<- data$distance[i-1]+data$velocity[i-1]
+  }
+  
+  return(data)
 
-# data<-calc_distance1(data)
+}
 
-calc_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
+# data<-calc_distance(data)
+
+calc_tot_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
   # Ensure the Distance moved column exists
   if (!"distance" %in% colnames(data)) {
     stop("The dataset does not contain a 'distance' column")
@@ -409,7 +434,7 @@ calc_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes =
 }
 
 # Example usage
-dist <- calc_distance(data)
+# dist <- calc_tot_distance(data)
 
 #### Function to calculate shuttling frequency ####
 
@@ -439,7 +464,7 @@ calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_en
 }
 
 # Example usage
-shut_freq <- calc_shuttling_frequency(data)
+# shut_freq <- calc_shuttling_frequency(data)
 
 #### Function to calculate occupancy time in each chamber ####
 
@@ -471,7 +496,7 @@ calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_min
 }
 
 # Example usage
-occ_time <- calc_occupancy_time(data)
+# occ_time <- calc_occupancy_time(data)
 
 #### Function to plot a histogram of time spent at different core body temperatures ####
 
@@ -525,7 +550,7 @@ plot_core_T_histogram <- function(data, bin_size, exclude_start_minutes = 0, exc
 
 #### Function to calculate variance in core body temperature experienced throughout the trial #####
 
-calc_variance <- function(data, variance_type = c("std_error", "std_deviation", "coeff_variation"), exclude_start_minutes = 0, exclude_end_minutes = 0) {
+calc_coreT_variance <- function(data, variance_type = c("std_error", "std_deviation", "coeff_variation"), exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure the body core temperature column exists
   if (!"core_T" %in% colnames(data)) {
     stop("The dataset does not contain a 'core_T' column. Please run file_prepare and calc_coreT")
@@ -556,9 +581,9 @@ calc_variance <- function(data, variance_type = c("std_error", "std_deviation", 
 }
 
 # # Example usage
-variance_se <- calc_variance(data, variance_type = "std_error", 240, 5)
-# variance_sd <- calc_variance(data, variance_type = "std_deviation", 240, 5)
-# variance_cv <- calc_variance(data, variance_type = "coeff_variation", 240, 5)
+# variance_se <- calc_coreT_variance(data, variance_type = "std_error", 240, 5)
+# variance_sd <- calc_coreT_variance(data, variance_type = "std_deviation", 240, 5)
+# variance_cv <- calc_coreT_variance(data, variance_type = "coeff_variation", 240, 5)
 # 
 # print(paste("Standard Error:", variance_se))
 # print(paste("Standard Deviation:", variance_sd))
@@ -596,7 +621,7 @@ variance_se <- calc_variance(data, variance_type = "std_error", 240, 5)
   }
 
 # Example usage
-plot_cumulative_distance(data, 240, 5)
+# plot_cumulative_distance(data, 240, 5)
 
 #### Function to calculate minimum gravitation time ####
 
@@ -616,11 +641,11 @@ calc_min_gravitation <- function(start_T, target_T, rate_of_change, print_result
 }
 
 # # Example usage
-start_T <- 27  # Starting mean temperature in °C
-target_T <- 35  # Target temperature in °C, e.g. approximation of anticipated Tpref
-rate_of_change <- 5  # Rate of temperature change in °C/h
-
-min_grav_time <- calc_min_gravitation(start_T, target_T, rate_of_change)
+# start_T <- 27  # Starting mean temperature in °C
+# target_T <- 35  # Target temperature in °C, e.g. approximation of anticipated Tpref
+# rate_of_change <- 5  # Rate of temperature change in °C/h
+# 
+# min_grav_time <- calc_min_gravitation(start_T, target_T, rate_of_change)
 
 #### Function to calculate time spent at extreme temperatures, near set limits ####
 
@@ -663,10 +688,8 @@ calc_extremes <- function(data, threshold = 0.2*(max(data$max_T)-max(data$min_T)
   return(c(time_near_lower_extreme, time_near_upper_extreme))
 }
 
-# # Example usage
-extreme_time_percent <- calc_extremes(data)
-calc_extremes(data, exclude_start_minutes = 0, exclude_end_minutes = 0)[2]
-
+# # # Example usage
+# extreme_time_percent <- calc_extremes(data)
 
 #### Function to plot histogram of movement speeds ####
 
@@ -820,7 +843,7 @@ plot_T_segmented <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_st
   }
 
 # Example usage
-plot_T_segmented(data, Tpref = Tpref, Tavoid_values[1], Tavoid_values[2])
+# plot_T_segmented(data, Tpref = Tpref, Tavoid_values[1], Tavoid_values[2])
 
 #### Function to plot changes in core body temperature over time, as well as Tpref, and upper and lower avoidance temperatures, but WITHOUT segmented regression lines #####
 
@@ -853,13 +876,13 @@ plot_T <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_start_minute
 }
 
 # Example usage
-plot_T(data, Tpref, Tavoid_values[1], Tavoid_values[2])
+# plot_T(data, Tpref, Tavoid_values[1], Tavoid_values[2])
 
 ##### Function to calculate actual gravitation time ####
 
 library(segmented)
 
-  calc_act_gravitation <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
+  calc_gravitation <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
   
   # Convert the time to numeric if not already
   data$time_sec <- as.numeric(data$time_sec)
@@ -895,12 +918,13 @@ library(segmented)
 }
 
 # Calculate gravitation time
-act_grav_time <- calc_act_gravitation(data)
+# act_grav_time <- calc_gravitation(data)
 
 ##### Function to calculate and plot interval means for shuttling rate over time ####
 
 library(ggplot2)
-library(dplyr)
+  
+  ####DEZE###
 
 shuttling_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure necessary columns exist
@@ -910,45 +934,43 @@ shuttling_aggregated <- function(data, interval_minutes = 10, exclude_start_minu
   
   # Convert time_sec to numeric if not already
   data$time_sec <- as.numeric(data$time_sec)
-  
+
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
-  end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
-  data <- data %>% filter(time_sec > start_time & time_sec < end_time)
-  
+  end_time <- max(data$time_sec, na.rm = T) - (exclude_end_minutes * 60)
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
+
   # Calculate time intervals
-  data <- data %>% 
-    mutate(Time_interval = floor((time_sec - start_time) / (interval_minutes * 60)) * interval_minutes)
-  
+  data$t_interval <- floor((data$time_sec - start_time) / (interval_minutes * 60)) * interval_minutes
+
   # Calculate mean shuttling rate for each interval
-  shuttling_rate <- data %>% 
-    group_by(Time_interval) %>% 
-    summarise(mean_shuttle_rate = mean(shuttle, na.rm = TRUE))
+  shuttling_rate <- aggregate(shuttle ~ t_interval, data = data, FUN = function(x) mean(x, na.rm = TRUE))
   
+  shuttling_rate$t_interval<-shuttling_rate$t_interval/60
+  shuttling_rate$shuttle <- shuttling_rate$shuttle*60
   # Convert Time_interval to numeric for plotting
-  shuttling_rate$Time_interval <- as.numeric(shuttling_rate$Time_interval)
-  
+  shuttling_rate$t_interval <- as.numeric(shuttling_rate$t_interval)
+
   # Plot the mean shuttling rate
-  plot <- ggplot(shuttling_rate, aes(x = Time_interval/60, y = mean_shuttle_rate*60)) +
+  plot <- ggplot(shuttling_rate, aes(x = t_interval, y = shuttle)) +
     geom_line(color = "black") +
     geom_point(color = "#F79518") +
     labs(title = "Mean Shuttling Rate Over the Trial",
          x = "Time (h)",
          y = "Mean Shuttling Rate (shuttles/hour)") +
     theme_classic()
-  
+
   print(plot)
-  
+
   return(shuttling_rate)
-}
+  }
 
 # Example usage
-shuttling_rate <- shuttling_aggregated(data, interval_minutes = 60)
+shuttling_aggregated(data, interval_minutes = 60)
 
 ##### Function to calculate and plot interval means for speed over time ####
 
 library(ggplot2)
-library(dplyr)
 
 speed_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure necessary columns exist
@@ -962,22 +984,19 @@ speed_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes 
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
-  data <- data %>% filter(time_sec > start_time & time_sec < end_time)
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Calculate time intervals
-  data <- data %>% 
-    mutate(Time_interval = floor((time_sec - start_time) / (interval_minutes * 60)) * interval_minutes)
+  data$t_interval <- floor((data$time_sec - start_time) / (interval_minutes * 60)) * interval_minutes
   
   # Calculate mean movement speed for each interval
-  movement_speed <- data %>% 
-    group_by(Time_interval) %>% 
-    summarise(mean_movement_speed = mean(velocity, na.rm = TRUE))
+  movement_speed <- aggregate(velocity ~ t_interval, data = data, FUN = function(x) mean(x, na.rm = TRUE))
   
   # Convert Time_interval to numeric for plotting
-  movement_speed$Time_interval <- as.numeric(movement_speed$Time_interval)
+  movement_speed$t_interval <- as.numeric(movement_speed$t_interval)
   
   # Plot the mean movement speed
-  plot <- ggplot(movement_speed, aes(x = Time_interval/60, y = mean_movement_speed)) +
+  plot <- ggplot(movement_speed, aes(x = t_interval/60, y = velocity)) +
     geom_line(color = "black") +
     geom_point(color = "#F79518") +
     labs(title = "Mean Movement Speed Over the Trial",
@@ -991,14 +1010,13 @@ speed_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes 
 }
 
 # Example usage
-movement_speed <- speed_aggregated(data, interval_minutes = 60, exclude_end_minutes = 5)
+speed_aggregated(data, interval_minutes = 60, exclude_end_minutes = 5)
 
 ##### Function to calculate and plot interval means for body core temperature over time ####
 
 library(ggplot2)
-library(dplyr)
 
-Tcore_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+coreT_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure necessary columns exist
   if (!all(c("time_sec", "core_T") %in% colnames(data))) {
     stop("The dataset does not contain one or more necessary columns: 'time_sec', 'core_T'.")
@@ -1010,22 +1028,19 @@ Tcore_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes 
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
-  data <- data %>% filter(time_sec > start_time & time_sec < end_time)
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Calculate time intervals
-  data <- data %>% 
-    mutate(Time_interval = floor((time_sec - start_time) / (interval_minutes * 60)) * interval_minutes)
-  
+  data$t_interval <- floor((data$time_sec - start_time) / (interval_minutes * 60)) * interval_minutes
+
   # Calculate mean preferred temperature for each interval
-  Tcore_aggregated <- data %>% 
-    group_by(Time_interval) %>% 
-    summarise(mean_Tcore = mean(core_T, na.rm = TRUE))
+  coreT_aggregated <- aggregate(core_T ~ t_interval, data = data, FUN = function(x) mean(x, na.rm = TRUE))
   
   # Convert Time_interval to numeric for plotting
-  Tcore_aggregated$Time_interval <- as.numeric(Tcore_aggregated$Time_interval)
+  coreT_aggregated$t_interval <- as.numeric(coreT_aggregated$t_interval)
   
   # Plot the mean preferred temperature
-  plot <- ggplot(Tcore_aggregated, aes(x = Time_interval/60, y = mean_Tcore)) +
+  plot <- ggplot(coreT_aggregated, aes(x = t_interval/60, y = core_T)) +
     geom_line(color = "black") +
     geom_point(color = "#F79518") +
     labs(title = "Mean Body Core Temperature Over the Trial",
@@ -1035,16 +1050,15 @@ Tcore_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes 
   
   print(plot)
   
-  return(Tcore_aggregated)
+  return(coreT_aggregated)
 }
 
 # Example usage
-Tcore_agg <- Tcore_aggregated(data, interval_minutes = 60, exclude_start_minutes = 10, exclude_end_minutes = 5)
+coreT_aggregated(data, interval_minutes = 60, exclude_start_minutes = 10, exclude_end_minutes = 5)
 
-##### Function to calculate interval means for speed, shuttling rate, and Tcore, then produces a correlation matrix ####
+##### Function to calculate interval means for speed, shuttling rate, and coreT, then produces a correlation matrix ####
 
 library(ggplot2)
-library(dplyr)
 
 mean_correlations_scatterplots <- function(data, interval_minutes = 10, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Ensure necessary columns exist
@@ -1058,27 +1072,23 @@ mean_correlations_scatterplots <- function(data, interval_minutes = 10, exclude_
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
-  data <- data %>% filter(time_sec > start_time & time_sec < end_time)
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Calculate time intervals
-  data <- data %>% 
-    mutate(Time_interval = floor((time_sec - start_time) / (interval_minutes * 60)) * interval_minutes)
+  data$t_interval <- floor((data$time_sec - start_time) / (interval_minutes * 60)) * interval_minutes
   
   # Calculate mean values for velocity, Tpref (core_T), and shuttling rate for each interval
-  summary_data <- data %>% 
-    group_by(Time_interval) %>% 
-    summarise(mean_velocity = mean(velocity, na.rm = TRUE),
-              mean_Tpref = mean(core_T, na.rm = TRUE),
-              mean_shuttle_rate = mean(shuttle, na.rm = TRUE))
+  mean_data <- aggregate(cbind(velocity, core_T, shuttle) ~ t_interval, data = data, 
+                         FUN = function(x) mean(x, na.rm = TRUE))
   
   # Calculate correlation matrix
-  correlation_matrix <- cor(summary_data[, -1], use = "complete.obs")
+  correlation_matrix <- cor(mean_data[, -1], use = "complete.obs")
   
   # Print the correlation matrix
   print(correlation_matrix)
   
   # Create scatterplots for pairwise comparisons
-  plot1 <- ggplot(summary_data, aes(x = mean_velocity, y = mean_Tpref)) +
+  plot1 <- ggplot(mean_data, aes(x = velocity, y = core_T)) +
     geom_point(color = "#F79518") +
     geom_smooth(method = "lm", color = "black", se = FALSE) +
     labs(title = "Mean velocity vs Mean Tpref",
@@ -1086,7 +1096,7 @@ mean_correlations_scatterplots <- function(data, interval_minutes = 10, exclude_
          y = "Mean Tpref (°C)") +
     theme_classic()
   
-  plot2 <- ggplot(summary_data, aes(x = mean_velocity, y = mean_shuttle_rate)) +
+  plot2 <- ggplot(mean_data, aes(x = velocity, y = shuttle)) +
     geom_point(color = "#F79518") +
     geom_smooth(method = "lm", color = "black", se = FALSE) +
     labs(title = "Mean velocity vs Mean Shuttling Rate",
@@ -1094,7 +1104,7 @@ mean_correlations_scatterplots <- function(data, interval_minutes = 10, exclude_
          y = "Mean Shuttling Rate") +
     theme_classic()
   
-  plot3 <- ggplot(summary_data, aes(x = mean_Tpref, y = mean_shuttle_rate)) +
+  plot3 <- ggplot(mean_data, aes(x = core_T, y = shuttle)) +
     geom_point(color = "#F79518") +
     geom_smooth(method = "lm", color = "black", se = FALSE) +
     labs(title = "Mean Tpref vs Mean Shuttling Rate",
@@ -1107,16 +1117,17 @@ mean_correlations_scatterplots <- function(data, interval_minutes = 10, exclude_
   print(plot2)
   print(plot3)
   
-  return(list(summary_data = summary_data, correlation_matrix = correlation_matrix, plots = list(plot1, plot2, plot3)))
-}
+  return(list(mean_data = mean_data, correlation_matrix = correlation_matrix, plots = list(plot1 = plot1, plot2 = plot2, plot3 = plot3)))
 
-# Example usage
+  }
+
+# # Example usage
 results <- mean_correlations_scatterplots(data, interval_minutes = 10, exclude_start_minutes = 10, exclude_end_minutes = 5)
-summary_data <- results$summary_data
-correlation_matrix <- results$correlation_matrix
-plots <- results$plots
-
-correlation_matrix
+results$mean_data
+results$correlation_matrix
+results$plots$plot3
+# 
+# correlation_matrix
 
 
 # results
@@ -1187,9 +1198,9 @@ plot_heatmap <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 
   return(heatmap_plot)
 }
 
-# Example usage
-heatmap_plot <- plot_heatmap(data)
-print(heatmap_plot)
+# # Example usage
+# heatmap_plot <- plot_heatmap(data)
+# print(heatmap_plot)
 
 ##### Function to visualise links between shuttling and activity across individuals in the entire project dataset ####
 
@@ -1214,7 +1225,7 @@ plot_distance_vs_shuttles <- function(proj_data) {
 }
 
 # Example usage
-plot_distance_vs_shuttles(proj_data)
+# plot_distance_vs_shuttles(proj_data)
 
 ##### Function to visualise links between time near system temperature limits and activity across individuals in the entire project dataset ####
 
@@ -1269,108 +1280,286 @@ plot_limits_vs_shuttles <- function(proj_data) {
 
 ##### Function to perform PCA with shuttles, distance moved, and time near limits, then plot PC scores vs Tpref ####
 
-library(ggplot2)
-library(dplyr)
 library(FactoMineR)
 library(factoextra)
+library(ggplot2)
+library(dbscan)
 
-pca_and_plot <- function(proj_data) {
-  # Ensure necessary columns exist
-  if (!all(c("ID", "distance", "shuttles", "time_near_limits", "Tpref") %in% colnames(proj_data))) {
-    stop("The dataset does not contain one or more necessary columns: 'ID', 'distance', 'shuttles', 'time_near_limits', 'Tpref'.")
+pca <- function(data, mahalanobis_th = 0.7, dbscan_th = 1, print_labels = TRUE, id_col = "fileID", var_col = "Tpref") {
+  
+  # Change the id column into row names 
+  # Remove all non-numeric columns and perform a PCA
+  rownames(data) <- data[[id_col]]
+  pca_data <- data[, sapply(data, is.numeric)]
+  
+  pca <- PCA(pca_data, scale.unit = TRUE, graph = FALSE)
+  pca_scores <- pca$ind$coord
+  
+  # Compute the Mahalanobis distance
+  center <- colMeans(pca_scores)  # Mean of the PCA scores
+  cov_matrix <- cov(pca_scores)  # Covariance matrix of PCA scores
+  mahalanobis_dist <- mahalanobis(pca_scores, center, cov_matrix)
+  mahalanobis_dist_df<-as.data.frame(mahalanobis_dist)
+  
+  threshold <- qchisq(mahalanobis_th, df = ncol(pca_scores))  # Chi-squared threshold
+  outliers_mahalanobis <- rownames(mahalanobis_dist_df)[mahalanobis_dist_df$mahalanobis_dist > threshold]
+  
+  dbscan_result <- dbscan::dbscan(pca_scores[, 1:2], eps = dbscan_th, minPts = 5)  # Using PC1 and PC2 for DBSCAN
+  outliers_dbscan <- rownames(data)[dbscan_result$cluster == 0]  # Points with cluster = 0 are outliers
+  
+  combined_outliers <- matrix(NA, nrow = 2, ncol = max(length(outliers_mahalanobis), length(outliers_dbscan)))
+  combined_outliers[1, 1:length(outliers_mahalanobis)] <- outliers_mahalanobis
+  combined_outliers[2, 1:length(outliers_dbscan)] <- outliers_dbscan
+  combined_outliers <- as.data.frame(combined_outliers)
+  rownames(combined_outliers) <- c("Mahalanobis Outliers", "DBSCAN Outliers")
+  
+  p1 <- fviz_screeplot(pca, addlabels = print_labels, main = "Scree Plot")
+  if (print_labels) {
+    label_content <- "all"
+  }else {label_content <- "var"
   }
+  p2 <- fviz_pca_biplot(pca, label = label_content,
+                        repel = TRUE,  # Avoid overlapping labels
+                        col.var = "blue", # Color for variables
+                        col.ind = "red",  # Color for individuals
+                        title = "PCA Biplot")
   
-  # Select the columns for PCA
-  pca_data <- proj_data %>%
-    dplyr::select(distance, shuttles, time_near_limits) %>%
-    na.omit()  # Remove any rows with missing values
+  p3 <- fviz_contrib(pca, choice = "var", axes = 1)+
+    ggtitle("Contribution of variables to PC1")
   
-  # Perform PCA with scaling
-  pca_result <- PCA(pca_data, scale.unit = TRUE, graph = FALSE)
+  plot_dat <- data.frame(id = data[[id_col]], PC1 = pca$ind$coord[, 1], var_y = data[[var_col]])
+  names(plot_dat)[names(plot_dat) == "var_y"]<-var_col
+  plot_dat[!is.na(plot_dat$id), ]
   
-  # Extract the scores of the first principal component
-  scores <- data.frame(ID = proj_data$ID, PC1 = pca_result$ind$coord[, 1], Tpref = proj_data$Tpref)
-  
-  # Extract the loadings
-  loadings <- data.frame(Variable = rownames(pca_result$var$coord), pca_result$var$coord)
-  
-  # Display the loadings
-  print("PCA Loadings:")
-  print(loadings)
-  
-  # Create the plot with 95% CI
-  plot <- ggplot(scores, aes(x = PC1, y = Tpref, label = ID)) +
+  p4 <- ggplot(plot_dat, aes(x = PC1, y = Tpref)) +
     geom_point(color = "#F79518") +
     geom_smooth(method = "lm", color = "black") +  # Adding 95% CI shading
-    geom_text(vjust = -1, hjust = 1.5) +
-    labs(title = "PCA Scores from the First Component vs Tpref with 95% CI",
+    geom_text(aes(label = ifelse(print_labels, id, "")), vjust = -1, hjust = 1.5) +
+    labs(title = paste0("PCA Scores from the First Component vs ",var_col," with 95% CI"),
          x = "PCA First Component Score",
-         y = "Tpref (°C)") +
+         y = paste0(var_col)) +
     theme_classic()
   
-  print(plot)
+  pca_loadings <- pca$var$coord
   
-  return(list(pca_result = pca_result, scores = scores, loadings = loadings))
+  output<-list(pca = pca,
+               pca_loadings = pca_loadings,
+               pca_scores = pca_scores,
+               outliers = combined_outliers, 
+               plots = list (p1 = p1, p2 = p2, p3 = p3, p4 = p4))
+
+  return(output)
+  
 }
 
-# # Example usage
-results <- pca_and_plot(proj_data)
-pca_result <- results$pca_result
-scores <- results$scores
-loadings <- results$loadings
-# 
-loadings
+# Example usage
+results <- pca(glasgow_results, print_labels = F)
+results$outliers
+results$plots$p1
+results$pca_loadings
+
+# loadings
 ##### Function to create frequency distributions for key measures across individuals in the data set ####
 
 library(ggplot2)
 library(gridExtra)
 
-plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper = 1, bin_size_Tavoid_lower = 1, bin_size_distance = 2000, bin_size_shuttles = 20, bin_size_time_near_limits = 5) {
+plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper = 1, bin_size_Tavoid_lower = 1, bin_size_distance = 2000, bin_size_shuttles = 20, bin_size_time_near_limits = 5, nr_sd = 2, id_col = "fileID") {
   # Ensure necessary columns exist
-  required_columns <- c("Tpref", "Tavoid_upper", "Tavoid_lower", "distance", "shuttles", "time_near_limits")
+  required_columns <- c("Tpref", "Tavoid_upper", "Tavoid_lower", "distance", "nr_shuttles", "t_near_limits")
   if (!all(required_columns %in% colnames(proj_data))) {
-    stop("The dataset does not contain one or more necessary columns: 'Tpref', 'Tavoid_upper', 'Tavoid_lower', 'distance', 'shuttles', 'time_near_limits'.")
+    stop("The dataset does not contain one or more necessary columns: 'Tpref', 'Tavoid_upper', 'Tavoid_lower', 'distance', 'nr_shuttles', 't_near_limits'.")
   }
   
   # Create individual plots
   p1 <- ggplot(proj_data, aes(x = Tpref)) +
-    geom_histogram(binwidth = bin_size_Tpref, fill = "#F79518", color = "black") +
-    labs(title = "Distribution of Tpref", x = "Tpref (°C)", y = "Frequency") +
+    geom_histogram(aes(y = after_stat(count)),
+                   binwidth = bin_size_Tpref, 
+                   fill = "#F79518", 
+                   color = "black") +
+    stat_function(fun = function(x) dnorm(x, 
+                                          mean = mean(proj_data$Tpref, na.rm = TRUE), 
+                                          sd = sd(proj_data$Tpref, na.rm = TRUE)) * length(proj_data$Tpref) * bin_size_Tpref,
+                  linewidth = 1, 
+                  color = 'darkorange2') +
+    labs(title = "Distribution of Tpref", 
+         x = "Tpref (°C)", 
+         y = "Frequency") +
     theme_classic()
   
+  # p2: Distribution of Tavoid_upper
   p2 <- ggplot(proj_data, aes(x = Tavoid_upper)) +
-    geom_histogram(binwidth = bin_size_Tavoid_upper, fill = "#E41A1C", color = "black") +
+    geom_histogram(aes(y = after_stat(count)),
+                   binwidth = bin_size_Tavoid_upper, 
+                   fill = "#E41A1C", 
+                   color = "black") +
+    stat_function(fun = function(x) dnorm(x, 
+                                          mean = mean(proj_data$Tavoid_upper, na.rm = TRUE), 
+                                          sd = sd(proj_data$Tavoid_upper, na.rm = TRUE)) * length(proj_data$Tavoid_upper) * bin_size_Tavoid_upper,
+                  linewidth = 1, 
+                  color = 'darkred') +  
     labs(title = "Distribution of Tavoid_upper", x = "Tavoid_upper (°C)", y = "Frequency") +
     theme_classic()
   
+  # p3: Distribution of Tavoid_lower
   p3 <- ggplot(proj_data, aes(x = Tavoid_lower)) +
-    geom_histogram(binwidth = bin_size_Tavoid_lower, fill = "#377EB8", color = "black") +
+    geom_histogram(aes(y = after_stat(count)),
+                   binwidth = bin_size_Tavoid_lower, 
+                   fill = "#377EB8", 
+                   color = "black") +
+    stat_function(fun = function(x) dnorm(x, 
+                                          mean = mean(proj_data$Tavoid_lower, na.rm = TRUE), 
+                                          sd = sd(proj_data$Tavoid_lower, na.rm = TRUE)) * length(proj_data$Tavoid_lower) * bin_size_Tavoid_lower,
+                  linewidth = 1, 
+                  color = 'darkblue') +  
     labs(title = "Distribution of Tavoid_lower", x = "Tavoid_lower (°C)", y = "Frequency") +
     theme_classic()
   
+  # p4: Distribution of Distance
   p4 <- ggplot(proj_data, aes(x = distance)) +
-    geom_histogram(binwidth = bin_size_distance, fill = "#4DAF4A", color = "black") +
+    geom_histogram(aes(y = after_stat(count)),
+                   binwidth = bin_size_distance, 
+                   fill = "#4DAF4A", 
+                   color = "black") +
+    stat_function(fun = function(x) dnorm(x, 
+                                          mean = mean(proj_data$distance, na.rm = TRUE), 
+                                          sd = sd(proj_data$distance, na.rm = TRUE)) * length(proj_data$distance) * bin_size_distance,
+                  linewidth = 1, 
+                  color = 'darkgreen') +  
     labs(title = "Distribution of Distance", x = "Distance", y = "Frequency") +
     theme_classic()
   
-  p5 <- ggplot(proj_data, aes(x = shuttles)) +
-    geom_histogram(binwidth = bin_size_shuttles, fill = "#984EA3", color = "black") +
-    labs(title = "Distribution of Shuttles", x = "Shuttles", y = "Frequency") +
+  # p5: Distribution of Shuttles
+  p5 <- ggplot(proj_data, aes(x = nr_shuttles)) +
+    geom_histogram(aes(y = after_stat(count)),
+                   binwidth = bin_size_shuttles, 
+                   fill = "#984EA3", 
+                   color = "black") +
+    stat_function(fun = function(x) dnorm(x, 
+                                          mean = mean(proj_data$nr_shuttles, na.rm = TRUE), 
+                                          sd = sd(proj_data$nr_shuttles, na.rm = TRUE)) * length(proj_data$nr_shuttles) * bin_size_shuttles,
+                  linewidth = 1, 
+                  color = 'purple') +  
+    labs(title = "Distribution of Shuttles", x = "Nr shuttles", y = "Frequency") +
     theme_classic()
   
-  p6 <- ggplot(proj_data, aes(x = time_near_limits)) +
-    geom_histogram(binwidth = bin_size_time_near_limits, fill = "#EEDD82", color = "black") +
+  # p6: Distribution of Time Near Limits
+  p6 <- ggplot(proj_data, aes(x = t_near_limits)) +
+    geom_histogram(aes(y = after_stat(count)),
+                   binwidth = bin_size_time_near_limits, 
+                   fill = "#EEDD82", 
+                   color = "black") +
+    stat_function(fun = function(x) dnorm(x, 
+                                          mean = mean(proj_data$t_near_limits, na.rm = TRUE), 
+                                          sd = sd(proj_data$t_near_limits, na.rm = TRUE)) * length(proj_data$t_near_limits) * bin_size_time_near_limits,
+                  linewidth = 1, 
+                  color = 'orange') +  
     labs(title = "Distribution of Time Near Limits", x = "Time Near Extremes", y = "Frequency") +
     theme_classic()
+  
+  variables <- c("Tpref", "Tavoid_upper", "Tavoid_lower", "distance", "nr_shuttles", "t_near_limits")
+
+  # Function to detect outliers based on Z-score for selected variables and return a dataframe with outlier ids
+  detect_outliers <- function(data, variables) {
+    outlier_df <- data.frame(matrix(NA, nrow = nrow(data), ncol = length(variables)))  # Initialize dataframe with NA
+    
+    # Set column names of the dataframe to the variable names
+    colnames(outlier_df) <- variables
+    
+    # Loop through the specified variables
+    for (i in seq_along(variables)) {
+      var <- variables[i]
+      
+      # Calculate the Z-scores for the variable
+      z_scores <- (data[[var]] - mean(data[[var]])) / sd(data[[var]])
+      
+      # Identify outliers
+      outlier_indices <- which(abs(z_scores) > nr_sd)
+      
+      # Place outlier ids in the respective columns, keeping others as NA
+      
+      outlier_df[outlier_indices, i] <- data[[id_col]][outlier_indices]
+      
+    }
+    
+    return(outlier_df)
+  }
+  
+  outlier_df<-detect_outliers(proj_data, variables)
+  
+  names_Tpref <- proj_data[!is.na(proj_data$Tpref) & proj_data$fileID %in% outlier_df$Tpref, c("fileID", "Tpref")]
+  plot_build <- ggplot_build(p1)
+  y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
+  y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
+  y_mid <- (y_min + y_max) / 2  
+  
+  p1 <- p1 + 
+    geom_vline(data = names_Tpref, aes(xintercept = Tpref), color = "blue", linetype = "dashed") +
+    geom_text(data = names_Tpref, aes(x = Tpref, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
+  
+  
+  names_Tavoid_upper <- proj_data[!is.na(proj_data$Tavoid_upper) & proj_data$fileID %in% outlier_df$Tavoid_upper, c("fileID", "Tavoid_upper")]
+  plot_build <- ggplot_build(p2)
+  y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
+  y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
+  y_mid <- (y_min + y_max) / 2
+  
+  p2 <- p2 + 
+    geom_vline(data = names_Tavoid_upper, aes(xintercept = Tavoid_upper), color = "blue", linetype = "dashed") +
+    geom_text(data = names_Tavoid_upper, aes(x = Tavoid_upper, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
+  
+  names_Tavoid_lower <- proj_data[!is.na(proj_data$Tavoid_lower) & proj_data$fileID %in% outlier_df$Tavoid_lower, c("fileID", "Tavoid_lower")]
+  plot_build <- ggplot_build(p2)
+  y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
+  y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
+  y_mid <- (y_min + y_max) / 2
+  
+  p3 <- p3 + 
+    geom_vline(data = names_Tavoid_lower, aes(xintercept = Tavoid_lower), color = "blue", linetype = "dashed") +
+    geom_text(data = names_Tavoid_lower, aes(x = Tavoid_lower, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
+  
+  names_distance <- proj_data[!is.na(proj_data$distance) & proj_data$fileID %in% outlier_df$distance, c("fileID", "distance")]
+  plot_build <- ggplot_build(p2)
+  y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
+  y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
+  y_mid <- (y_min + y_max) / 2
+  
+  p4 <- p4 + 
+    geom_vline(data = names_distance, aes(xintercept = distance), color = "blue", linetype = "dashed") +
+    geom_text(data = names_distance, aes(x = distance, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
+ 
+  names_nr_shuttles <- proj_data[!is.na(proj_data$nr_shuttles) & proj_data$fileID %in% outlier_df$nr_shuttles, c("fileID", "nr_shuttles")]
+  plot_build <- ggplot_build(p2)
+  y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
+  y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
+  y_mid <- (y_min + y_max) / 2
+  
+  p5 <- p5 + 
+    geom_vline(data = names_nr_shuttles, aes(xintercept = nr_shuttles), color = "blue", linetype = "dashed") +
+    geom_text(data = names_nr_shuttles, aes(x = nr_shuttles, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
+  
+  names_t_near_limits <- proj_data[!is.na(proj_data$t_near_limits) & proj_data$fileID %in% outlier_df$t_near_limits, c("fileID", "t_near_limits")]
+  plot_build <- ggplot_build(p2)
+  y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
+  y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
+  y_mid <- (y_min + y_max) / 2
+  
+  p6 <- p6 + 
+    geom_vline(data = names_t_near_limits, aes(xintercept = t_near_limits), color = "blue", linetype = "dashed") +
+    geom_text(data = names_t_near_limits, aes(x = t_near_limits, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
   
   # Combine the plots into a multipanel plot
   multipanel_plot <- grid.arrange(p1, p2, p3, p4, p5, p6, ncol = 2)
   
-  return(multipanel_plot)
+  print(invisible(multipanel_plot))
+  return(outlier_df)
 }
 
+
 # Example usage
-multipanel_plot <- plot_histograms(proj_data)
+outliers<-plot_histograms(glasgow_results, bin_size_distance = 50000, bin_size_shuttles = 500, nr_sd = 1.5)
+
+
 
 
 
@@ -1395,7 +1584,7 @@ read.shuttlesoft.project <- function (metadata, directory = getwd()){
     }
     
     # Find rows with NA in specified columns
-    columns_to_check <- c("file_name", "trial_start", "mass", "a_value", "b_value")
+    columns_to_check <- intersect(c("file_name", "trial_start", "mass", "a_value", "b_value"), colnames(metadata))
     rows_with_na <- apply(metadata[columns_to_check], 1, function(row) any(is.na(row)))
     
     # If there are any rows with NA, throw warning mentioning file names
@@ -1414,7 +1603,15 @@ read.shuttlesoft.project <- function (metadata, directory = getwd()){
   # Search for all the .txt files in the specified directory
   txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
   
-  # Read those text files and compile them into a list
+  # Check if all files are represented in the metadata
+  file_names <- basename(txt_files)
+  missing_files <- setdiff(file_names, metadata$file_name)
+  if (length(missing_files) > 0) {
+    stop(paste("The following files are not represented in metadata:", 
+               paste(missing_files, collapse = "\n ")))
+  }
+  
+    # Read those text files and compile them into a list
   data_read <- lapply(txt_files, read.shuttlesoft, metadata = metadata, multidat = T)
   
   # Name each list element as the directory of the text files
@@ -1423,14 +1620,16 @@ read.shuttlesoft.project <- function (metadata, directory = getwd()){
   return(data_read)
 }
 
-data_read<-read.shuttlesoft.project(metadata)
+data_read<-read.shuttlesoft.project(metadata_test)
 
-compile_project_data <- function(data_read,
+compile.project.data <- function(data_read,
+                                 calc_distance = F,
+                                 pixel_to_cm = T,
                                  exclude_acclimation = F,
                                  exclude_start_minutes = 0, 
                                  exclude_end_minutes = 0,
                                  Tpref_method = "median",
-                                 Tavoid_percintiles = c(0.05, 0.95),
+                                 Tavoid_percentiles = c(0.05, 0.95),
                                  textremes_threshold = expression(0.2 * (max(df$max_T) - max(df$min_T))),
                                  core_T_variance_type = "std_error"){
   
@@ -1439,37 +1638,40 @@ compile_project_data <- function(data_read,
 
   
   # Create a function that pulls all the information from a datafile in one go, using the functions specified earlier 
-  apply_functions <- function(df, df_name,
-                              exc_accl = exclude_acclimation,
-                              exc_start = exclude_start_minutes, 
-                              exc_end = exclude_end_minutes,
-                              Tpref_met = Tpref_method,
-                              Tavoid_perc = Tavoid_percintiles,
-                              textremes_th = eval(textremes_threshold),
-                              Tcore_variance = core_T_variance_type) {
+  apply_functions <- function(df, df_name) {
     
     # Define the fileID the function is currently considering
     fileID <- unique(df$fileID)
     
     # Calculate core body temperature
     df<-calc_coreT(df)
+    
+    # Calculate distance covered if true
+    if (calc_distance) df<-calc_distance (df, pixel_to_cm)
 
     # Exclude acclimation period if requested from the start. Acclimation period is defined in file_prepare
-    ifelse(exclude_acclimation == T, df<-subset(df, df$trial_phase != "acclimation"), df)
+    if(exclude_acclimation) {
+      df <- subset(df, df$trial_phase != "acclimation") 
+}
+    # Subset custom time window
+    df <- df[df$time_sec >= exclude_start_minutes * 60 & df$time_sec <= max(data$time_sec) - (exclude_end_minutes * 60), ]
+    
+    textremes_th <- eval(textremes_threshold) 
     
     # Calculate all variables using default settings (these can be edited in the main function)
-    Tpref <- calc_Tpref(df, method = Tpref_met, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
-    grav_time <- calc_act_gravitation(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
-    distance <- calc_distance(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
-    Tavoid <- calc_Tavoid(df, percentiles = Tavoid_perc, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
-    Tpref_range <- Tavoid[2]-Tavoid[1]
-    textremes <- calc_extremes(df, threshold = textremes_th, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
-    core_T_variance <- calc_variance(df, variance_type = Tcore_variance, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end)
-    nr_shuttles <- calc_shuttling_frequency(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
-    chamber_seconds <- calc_occupancy_time(df, exclude_start_minutes = exc_start, exclude_end_minutes = exc_end, print_results = F)
+    Tpref <- calc_Tpref(df, method = Tpref_method, print_results = F)
+    grav_time <- calc_gravitation(df, print_results = F)
+    distance <- calc_tot_distance(df, print_results = F)
+    Tavoid <- calc_Tavoid(df, percentiles = Tavoid_percentiles, print_results = F)
+    Tpref_range <- Tavoid[2] - Tavoid[1]
+    textremes <- calc_extremes(df, threshold = textremes_th, print_results = F)
+    textremes_tot <- textremes[1]+textremes[2]
+    core_T_variance <- calc_coreT_variance(df, variance_type = core_T_variance_type)
+    nr_shuttles <- calc_shuttling_frequency(df, print_results = F)
+    chamber_seconds <- calc_occupancy_time(df, print_results = F)
     
     # Return a list of the variables you want
-    return(list(fileID = fileID,
+    list(fileID = fileID,
                 Tpref = Tpref,
                 Tpref_range = Tpref_range,
                 grav_time = grav_time, 
@@ -1478,11 +1680,16 @@ compile_project_data <- function(data_read,
                 textremes = textremes,
                 core_T_variance = core_T_variance,
                 nr_shuttles = nr_shuttles,
-                chamber_seconds = chamber_seconds))
+                chamber_seconds = chamber_seconds)
   }
   
   # Apply functions to each dataframe in the list and collect results
-  results <- do.call(rbind, lapply(names(data_list), function(name) {
+  
+  # Apply functions to each dataframe in the list and collect results
+  results <- do.call(rbind, lapply(names(data_list), function(name, total) {
+    # Track progress
+    current_iter <- which(names(data_list) == name)  #CHANGE: Get the current iteration number
+    message("Processing dataset ", current_iter, " of ", total, " (", round((current_iter / total) * 100, 2), "% complete)")  
     
     # Apply the functions
     func_results <- apply_functions(df = data_list[[name]], df_name = name)
@@ -1492,20 +1699,19 @@ compile_project_data <- function(data_read,
       fileID = func_results$fileID,
       Tpref = func_results$Tpref,
       Tpref_range = func_results$Tpref_range,
-      grav_time  = func_results$grav_time,
-      distance  = func_results$distance,
-      Tavoid_low  = func_results$Tavoid[1],
-      Tavoid_high = func_results$Tavoid[2],
-      t_near_low_extreme  = func_results$textremes[1],
-      t_near_high_extreme  = func_results$textremes[2],
-      core_T_variance  = func_results$core_T_variance,
-      nr_shuttles  = func_results$nr_shuttles,
+      grav_time = func_results$grav_time,
+      distance = func_results$distance,
+      Tavoid_lower = func_results$Tavoid[1],
+      Tavoid_upper = func_results$Tavoid[2],
+      t_near_min = func_results$textremes[1],
+      t_near_max = func_results$textremes[2],
+      t_near_limits = func_results$textremes_tot,
+      core_T_variance = func_results$core_T_variance,
+      nr_shuttles = func_results$nr_shuttles,
       seconds_in_DECR = func_results$chamber_seconds[1],
       seconds_in_INCR = func_results$chamber_seconds[2]
-      
     )
-    
-  }))
+  }, total = length(data_list)))  #CHANGE: Passed the total number of iterations
   
   # Reset rownames as they have acquired names from the list
   rownames(results) <- NULL
@@ -1513,17 +1719,158 @@ compile_project_data <- function(data_read,
   return(results)
 }
 
-results<-compile_project_data(data_read, exclude_acclimation = F)
+results<-compile.project.data(data_read, exclude_acclimation = F)
 
 calc_Tpref(data, method = "median")
-calc_act_gravitation(data)
-calc_distance(data)
+calc_gravitation(data)
+calc_tot_distance(data)
 Tavoid<-calc_Tavoid(data)
 Tavoid[2] - Tavoid[1]
 calc_extremes(data)
-calc_variance(data)
+calc_coreT_variance(data)
 calc_shuttling_frequency(data)
 calc_occupancy_time(data)
 
 
 write.csv(data, "data.csv")
+
+
+#### test ####
+
+
+
+# glasgow_read<-read.shuttlesoft.project(metadata_glasgow, "C:/GitHub/ShuttleboxR/Glasgow_2011")
+# glasgow_results <- compile.project.data(glasgow_read)
+# 
+# glasgow_read_short<-read.shuttlesoft.project(metadata_glasgow, "C:/GitHub/ShuttleboxR/Glasgow_2011/Short")
+# glasgow_results_short <- compile.project.data(glasgow_read_short)
+
+# write.csv(glasgow_results, "C:/GitHub/ShuttleboxR/Glasgow_2011/glasgow_results.csv")
+glasgow_results<-read.csv("C:/GitHub/ShuttleboxR/Glasgow_2011/glasgow_results.csv")
+glasgow_results$t_near_limits <- glasgow_results$t_near_max+glasgow_results$t_near_min
+
+plot_histograms(glasgow_results, bin_size_distance = 50000, bin_size_shuttles = 500)
+
+pca_and_plot(glasgow_results)
+
+
+#### PCA tests ####
+
+# Identify important variables
+# 
+pca_data_glasgow<-glasgow_results[-1]
+pca_data_glasgow <- pca_data_glasgow[, sapply(pca_data_glasgow, is.numeric)]
+
+# Using FactoMineR
+library(FactoMineR)
+library(factoextra)
+
+pca <- PCA(pca_data_glasgow, scale.unit = TRUE, graph = FALSE)
+summary(pca)
+
+fviz_screeplot(pca, addlabels = TRUE, main = "Scree Plot")
+loadings_fm <- pca$var$coord
+loadings_fm
+fviz_pca_biplot(pca, 
+                repel = TRUE,  # Avoid overlapping labels
+                col.var = "blue", # Color for variables
+                col.ind = "red",  # Color for individuals
+                title = "PCA Biplot (FactoMineR)")
+pca$var$contrib
+fviz_pca_var(pca, col.var = "contrib", gradient.cols = c("blue", "yellow", "red"))
+fviz_contrib(pca, choice = "var", axes = 1:4)
+
+short_data <- pca_data_glasgow[,c("Tavoid_lower", "Tavoid_upper", "seconds_in_INCR", "t_near_limits", "Tpref", "Tpref_range", "distance")]
+pca_short <- PCA(short_data, scale.unit = TRUE, graph = FALSE)
+fviz_screeplot(pca_short, addlabels = TRUE, main = "Scree Plot")
+fviz_pca_biplot(pca_short, 
+                repel = TRUE,  # Avoid overlapping labels
+                col.var = "blue", # Color for variables
+                col.ind = "red",  # Color for individuals
+                title = "PCA Biplot (FactoMineR)")
+
+fviz_contrib(pca_short, choice = "var", axes = 1:5)
+fviz_pca_var(pca, col.var = "contrib", gradient.cols = c("blue", "yellow", "red"))
+summary(pca_short)
+
+
+pc1_scores <- pca_base$x[, 1]  
+variable<-glasgow_results$Tpref_range
+
+plot(variable, pc1_scores, 
+     xlab = "Variable", ylab = "PC1 Scores",
+     pch = 16, col = "blue")
+model <- lm(pc1_scores ~ variable)
+abline(model, col = "red", lwd = 2)
+summary(model)$r.squared
+
+#### PCA outlier methods ####
+library(dbscan)
+library(gridExtra)
+library(FactoMineR)
+library(factoextra)
+
+pca <- function(data, mahalanobis_th = 0.7, dbscan_th = 1, print_labels = TRUE, id_col = "fileID", var_col = "Tpref") {
+  
+  # Change the id column into row names 
+  # Remove all non-numeric columns and perform a PCA
+  rownames(data) <- data[[id_col]]
+  pca_data <- data[, sapply(data, is.numeric)]
+  
+  pca <- PCA(pca_data, scale.unit = TRUE, graph = FALSE)
+  pca_scores <- pca$ind$coord
+  
+  # Compute the Mahalanobis distance
+  center <- colMeans(pca_scores)  # Mean of the PCA scores
+  cov_matrix <- cov(pca_scores)  # Covariance matrix of PCA scores
+  mahalanobis_dist <- mahalanobis(pca_scores, center, cov_matrix)
+  mahalanobis_dist_df<-as.data.frame(mahalanobis_dist)
+  
+  threshold <- qchisq(mahalanobis_th, df = ncol(pca_scores))  # Chi-squared threshold
+  outliers_mahalanobis <- rownames(mahalanobis_dist_df)[mahalanobis_dist_df$mahalanobis_dist > threshold]
+  
+  dbscan_result <- dbscan::dbscan(pca_scores[, 1:2], eps = dbscan_th, minPts = 5)  # Using PC1 and PC2 for DBSCAN
+  outliers_dbscan <- rownames(data)[dbscan_result$cluster == 0]  # Points with cluster = 0 are outliers
+  
+  combined_outliers <- matrix(NA, nrow = 2, ncol = max(length(outliers_mahalanobis), length(outliers_dbscan)))
+  combined_outliers[1, 1:length(outliers_mahalanobis)] <- outliers_mahalanobis
+  combined_outliers[2, 1:length(outliers_dbscan)] <- outliers_dbscan
+  combined_outliers <- as.data.frame(combined_outliers)
+  rownames(combined_outliers) <- c("Mahalanobis Outliers", "DBSCAN Outliers")
+
+  p1 <- fviz_screeplot(pca, addlabels = TRUE, main = "Scree Plot")
+  p2 <- fviz_pca_biplot(pca,
+                  repel = TRUE,  # Avoid overlapping labels
+                  col.var = "blue", # Color for variables
+                  col.ind = "red",  # Color for individuals
+                  title = "PCA Biplot")
+
+  p3 <- fviz_contrib(pca, choice = "var", axes = 1)+
+    ggtitle("Contribution of variables to PC1")
+
+  plot_dat <- data.frame(id = data[[id_col]], PC1 = pca$ind$coord[, 1], var_y = data[[var_col]])
+  names(plot_dat)[names(plot_dat) == "var_y"]<-var_col
+  plot_dat[!is.na(plot_dat$id), ]
+
+  p4 <- ggplot(plot_dat, aes(x = PC1, y = Tpref)) +
+    geom_point(color = "#F79518") +
+    geom_smooth(method = "lm", color = "black") +  # Adding 95% CI shading
+    geom_text(aes(label = id), vjust = -1, hjust = 1.5) +
+    labs(title = paste0("PCA Scores from the First Component vs ",var_col," with 95% CI"),
+         x = "PCA First Component Score",
+         y = paste0(var_col)) +
+    theme_classic()
+  
+  output<-list(pca, combined_outliers, p1, p2, p3, p4)
+  names(output) <- c("pca", "outliers", "p1", "p2", "p3", "p4")
+  
+  return(output)
+  
+}
+ 
+pca <- detect_outliers_pca(proj_data, id_col = "id")
+
+pca$p2
+pca$outliers
+
+
