@@ -7,7 +7,7 @@
 
 
 # TO DO:  
-  # Edit inspect function for non shuttlesoft data to check if it contains the right data
+  # Edit inspect() to check type of data (e.g. time/numeric/whatever)
   # Write inspect.project function?
   # Add acclimation exclusion to each function
   # Remove dependencies as much as possible
@@ -25,31 +25,54 @@ renv::restore()
 
 # Confirm that R is looking in the right place
 getwd()
-
-
-#### File definitions ####
-proj_data <- read.csv("project_database.csv") # This should be a summary data file with data from numerous fish (e.g. all fish in a study)
-
-file <- "C:/GitHub/ShuttleboxR/Glasgow_2011/Fish_1_13_3.txt"
-# data<-read.csv("data.csv")
-# data$date <- as.Date(data$date, format = "%d/%m/%Y")
-
+#### test data ####
 metadata_test<-read.csv("additional_data.csv", na.strings = c("NaN", ""))
 
-metadata_glasgow<-read.delim("C:/GitHub/ShuttleboxR/Glasgow_2011/metadata/Fish_meta_data1.1.txt")
-colnames(metadata_glasgow)<-c("file_name", "initial_temp", "feed_level", "fasting_period", "sb_size", "side_config", "total_length", "mass")
-# metadata_glasgow$trial_start <- NA
-metadata_glasgow$file_name <- paste0(metadata_glasgow$file_name, ".txt")
-metadata_glasgow$a_value <- 3.69
-metadata_glasgow$b_value <- -0.574
+
+#### Moorea data ####
+
+#Working fish
+file <- "C:/GitHub/ShuttleboxR/Moorea_2024/Sys1_20240620_dflavicaudus_gg.d.03.txt"
 
 
-#### Read shuttlesoft files function ####
+# Metadata
+library(tidyverse)
+metadata_moorea <- read.csv("C:/GitHub/ShuttleboxR/Moorea_2024/shuttlebox_moorea_2024.csv")%>%
+  rename(file_name = log_name,
+         initial_T = holding_tank_temperature)%>%
+  mutate(file_name = paste0(file_name, ".txt"),
+         trial_start = ifelse(!is.na(trial_start), paste0(trial_start, ":00"), NA))
+mastersheet_moorea <- read.csv("C:/GitHub/ShuttleboxR/Moorea_2024/mastersheet_moorea_2024.csv")%>%
+  dplyr::select(Tag, Total_length, Weight_g)%>%
+  mutate(Tag = tolower(Tag))
+
+metdat2 <- left_join(metadata_moorea,
+                     mastersheet_moorea,
+                     by = join_by(id == Tag))%>%
+  rename(mass = Weight_g)%>%
+  mutate(a_value = 3.69,
+         b_value = -0.574,
+         mass = ifelse(is.na(mass), 1, mass))
+
+##### Glasgow data ####
+# proj_data <- read.csv("project_database.csv") # This should be a summary data file with data from numerous fish (e.g. all fish in a study)
+file <- "C:/GitHub/ShuttleboxR/Glasgow_2011/Fish_1_13_3.txt"
+
+metadata_glasgow<-read.delim("C:/GitHub/ShuttleboxR/Glasgow_2011/metadata/Fish_meta_data1.1.txt")%>%
+  rename(file_name = Fish_ID,
+         initial_temp = Accl_Temp,
+         mass = BM)%>%
+  mutate(file_name = paste0(file_name, ".txt"),
+         a_value = 3.69,
+         b_value = 0.574,
+         id = str_extract(file_name, "(?<=Fish_)\\d+"))
+
+##### (PREPARE) Read shuttlesoft files function ####
 
 # Collect existing information into one data file:
 # date, time, zone, INCR_T, DECR_T, coordinates/distance, pixel ratio, trial_start, mass, a_value, b_value, acclimation temp
 
-read.shuttlesoft <- function (file, metadata, multidat = F){
+read_shuttlesoft <- function (file, metadata, multidat = F){
   # Load .txt data file that shuttlesoft produces into R
   # Don't load headers, because the additional info at the top of the .txt file will make a confusing dataframe
   # Rename data columns
@@ -118,7 +141,7 @@ read.shuttlesoft <- function (file, metadata, multidat = F){
       
       if(!("trial_start" %in% colnames(metadata))){
         trial_start <- data$time[1]
-      }else if("trial_start" %in% colnames(metadata) && any(is.na(metadata$trial_start))){
+      }else if("trial_start" %in% colnames(metadata) && is.na(metadata$trial_start[metadata$file_name==fileID])){
         trial_start <- data$time[1]
       }else {
         trial_start<-metadata$trial_start[metadata$file_name==fileID]
@@ -151,9 +174,9 @@ read.shuttlesoft <- function (file, metadata, multidat = F){
   return(data)
 }
 
-data <- read.shuttlesoft(file, metadata_glasgow)
+data <- read_shuttlesoft(file, metadata_glasgow)
 
-#### Inspect data function ####
+##### (PREPARE) inspect data function ####
 inspect <- function(data){
   
   library(praise)
@@ -161,20 +184,21 @@ inspect <- function(data){
   if(!all(c("date", "time", "zone", "INCR_T", "DECR_T") %in% colnames(data))){
     stop("Dataset is missing one or more of the following necessary columns:  'date', 'time', 'zone', 'INCR_T', 'DECR_T'")
   }
-  else if(!all(c("x_pos", "y_pos", "velocity", "distance", "time_in_INCR", "time_in_DECR",
+  else if (!all(c("x_pos", "y_pos", "distance") %in% colnames(data))) {
+    warning("Dataset is missing 'x_pos', 'y_pos', 'distance', no way to determine distance found")
+  }
+  else if(!all(c( "velocity", "time_in_INCR", "time_in_DECR",
             "delta_T", "dyn_hysteresis", "stat_T_INCR", "stat_hyst_INCR", "stat_T_DECR",
             "stat_hyst_DECR", "max_T", "min_T", "change_rate")%in% colnames(data))) {
-    warning("Dataset is missing one or more of the following columns:'x_pos', 'y_pos', 'velocity', 'distance', 'time_in_INCR', 'time_in_DECR', 'delta_T', 'dyn_hysteresis', 'stat_T_INCR', 'stat_hyst_INCR', 'stat_T_DECR', 'stat_hyst_DECR', 'max_T', 'min_T', 'change_rate'")
-  } else {praise()}
-   
+    warning("Dataset is missing one or more of the following columns:'velocity', 'time_in_INCR', 'time_in_DECR', 'delta_T', 'dyn_hysteresis', 'stat_T_INCR', 'stat_hyst_INCR', 'stat_T_DECR', 'stat_hyst_DECR', 'max_T', 'min_T', 'change_rate'")
+  } else {praise("${Exclamation}! This dataset you have ${created} is ${adjective}!")}
+  
   
 }
-# inspect(data)
 
+inspect(data)
 
-
-
-#### Function to prepare data file for further processing and detect shuttles ####
+##### (PREPARE) prepare data file for further processing and detect shuttles ####
 
 file_prepare <- function(data) {
   
@@ -197,10 +221,8 @@ file_prepare <- function(data) {
   if(length(unique(data$date)) == 1){
   
   midnight_observation <- data$time_sec[data$time == "00:00:00"]
-  if(length(midnight_observation)>0){
-    data$date<-ifelse(data$time_sec>=midnight_observation, 
-                      data$date+1, 
-                      data$date)
+  if (length(midnight_observation) > 0) {
+    data$date[data$time_sec >= midnight_observation] <- data$date[data$time_sec >= midnight_observation] + 1
   }
   }
   
@@ -247,7 +269,7 @@ file_prepare <- function(data) {
 
 data <- file_prepare(data)
 
-#### Function to calculate body core temperature if not already done in Shuttlesoft ####
+##### (CALCULATE) coreT if not already done in Shuttlesoft ####
 
 calc_coreT <- function(data) {
   
@@ -296,9 +318,9 @@ calc_coreT <- function(data) {
 
 data <- calc_coreT(data)
 
-#### Function to calculate Tpref using either the mean or median of all body core temperature values ####
+##### (CALCULATE) Temperature preference (using mean or median of coreT values) ####
 
-calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
+calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
   method <- match.arg(method)
   
   # Convert the time to numeric if not already
@@ -308,6 +330,10 @@ calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
+  
+  if (exclude_acclimation) {
+    data <- data[data$trial_phase != "acclimation", ]
+  }
   
   # Convert the core_T column to numeric
   data$core_T <- as.numeric(data$core_T)
@@ -329,14 +355,12 @@ calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start
 }
 
 # Example usage
-# 
-# Tpref <- calc_Tpref(data, method = "median", exclude_start_minutes = 0, exclude_end_minutes = 0)
-# 
-# print(Tpref)
 
-#### Function to calculate upper and lower avoidance temperatures ####
+Tpref <- calc_Tpref(data, method = "median", exclude_start_minutes = 0, exclude_end_minutes = 0)
 
-calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
+##### (CALCULATE) Avoidance temperature (upper and lower) ####
+
+calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
   # Ensure the percentiles are valid
   if (length(percentiles) != 2 || any(percentiles < 0) || any(percentiles > 1)) {
     stop("Tavoid percentiles should be a vector of two values between 0 and 1")
@@ -346,9 +370,12 @@ calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
+  if (exclude_acclimation) {
+    data <- data[data$trial_phase != "acclimation", ]
+  }
   # Calculate the percentiles
-  Tavoid_lower <- quantile(data$core_T, percentiles[1], na.rm = TRUE)
-  Tavoid_upper <- quantile(data$core_T, percentiles[2], na.rm = TRUE)
+  Tavoid_lower <- quantile(data$core_T, percentiles[1], na.rm = TRUE, names = F)
+  Tavoid_upper <- quantile(data$core_T, percentiles[2], na.rm = TRUE, names = F)
   
   if (print_results) {
   # Print values
@@ -361,11 +388,9 @@ calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes
 }
 
 # Example usage
-# Calculate Tavoid values
+Tavoid_values <-calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = F)
 
-# Tavoid_values <-calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = F)
-
-#### Function to calculate total distance moved ####
+##### (CALCULATE) Total distance moved ####
 
 calc_distance <- function(data, pixel_to_cm = T){
   
@@ -405,7 +430,7 @@ calc_distance <- function(data, pixel_to_cm = T){
 
 # data<-calc_distance(data)
 
-calc_tot_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
+calc_tot_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
   # Ensure the Distance moved column exists
   if (!"distance" %in% colnames(data)) {
     stop("The dataset does not contain a 'distance' column")
@@ -415,8 +440,11 @@ calc_tot_distance <- function(data, exclude_start_minutes = 0, exclude_end_minut
   # Exclude initial and final data if necessary
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - exclude_end_minutes * 60
-  
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
+  
+  if (exclude_acclimation) {
+    data <- data[data$trial_phase != "acclimation", ]
+  }
   
   initial_distance <- data$distance[1]
   
@@ -434,11 +462,11 @@ calc_tot_distance <- function(data, exclude_start_minutes = 0, exclude_end_minut
 }
 
 # Example usage
-# dist <- calc_tot_distance(data)
+dist <- calc_tot_distance(data)
 
-#### Function to calculate shuttling frequency ####
+##### (CALCULATE) Shuttling frequency ####
 
-calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
+calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
   # Ensure the 'shuttle' and 'time_sec' columns exist
   if (!all(c("shuttle", "time_sec") %in% colnames(data))) {
     stop("The dataset does not contain 'shuttle' and/or 'time_sec' columns. Run file_prepare on your data.")
@@ -452,6 +480,10 @@ calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_en
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
+  if (exclude_acclimation) {
+    data <- data[data$trial_phase != "acclimation", ]
+  }
+  
   # Calculate shuttling frequency
   shuttles <- sum(data$shuttle, na.rm = TRUE)
 
@@ -464,11 +496,11 @@ calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_en
 }
 
 # Example usage
-# shut_freq <- calc_shuttling_frequency(data)
+shut_freq <- calc_shuttling_frequency(data)
 
-#### Function to calculate occupancy time in each chamber ####
+##### (CALCULATE) Occupancy time in each chamber ####
 
-calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
+calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
   # Ensure the 'zone' and 'time_sec' columns exist
   if (!all(c("zone", "time_sec") %in% colnames(data))) {
     stop("The dataset does not contain 'zone' and/or 'time_sec' columns.")
@@ -481,6 +513,10 @@ calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_min
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
+  
+  if (exclude_acclimation) {
+    data <- data[data$trial_phase != "acclimation", ]
+  }
   
   # Calculate occupancy time in each chamber
   time_in_chamberDECR <- sum(data$zone == "DECR", na.rm = TRUE)
@@ -496,61 +532,11 @@ calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_min
 }
 
 # Example usage
-# occ_time <- calc_occupancy_time(data)
+occ_time <- calc_occupancy_time(data)
 
-#### Function to plot a histogram of time spent at different core body temperatures ####
+##### (CALCULATE) Core temperature variance  #####
 
-library(ggplot2)
-
-plot_core_T_histogram <- function(data, bin_size, exclude_start_minutes = 0, exclude_end_minutes = 0) {
-  # Ensure the body core temperature column exists
-  if (!"core_T" %in% colnames(data)) {
-    stop("The dataset does not contain a 'core_T' column. Please run file_prepare and calc_coreT")
-  }
-  
-  # Convert time_sec to numeric if not already
-  data$time_sec <- as.numeric(data$time_sec)
-  
-  # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
-  start_time <- exclude_start_minutes * 60
-  end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
-  
-  # Calculate the duration of each bin in minutes
-  data$Time_min <- data$time_sec / 60
-  total_time <- max(data$Time_min, na.rm = TRUE)
-  
-  # Create the histogram data
-  hist_data <- hist(data$core_T, breaks = seq(floor(min(data$core_T, na.rm = TRUE)),
-                                                      ceiling(max(data$core_T, na.rm = TRUE)),
-                                                      by = bin_size), plot = FALSE)
-  
-  # Find the peak value
-  Tpref_peak <- hist_data$mids[which.max(hist_data$counts)]
-  
-  # Create the histogram plot
-  hist_plot <- ggplot(data, aes(x = core_T)) +
-    geom_histogram(binwidth = bin_size, aes(y = (..count.. / sum(..count..)) * 100), fill = "#F79518", color = "black") +
-    geom_vline(xintercept = Tpref_peak, color = "#9EF1A4", linetype = "dashed", linewidth = 2) +
-    labs(title = "Histogram of Percent of Time Spent at Different Body Core Temperatures",
-         subtitle = paste("Peak Tpref:", round(Tpref_peak, 2), "°C"),
-         x = "Body Core Temperature (°C)",
-         y = "Percent of Total Time (%)") +
-    theme_minimal()
-  
-  print(hist_plot)
-  print(paste("Peak Tpref:", Tpref_peak))
-  
-  return(Tpref_peak)
-}
-
-# # Example usage
-# Tpref_peak <- plot_core_T_histogram(data, bin_size = 0.1, exclude_start_minutes = 240, exclude_end_minutes = 5)
-# print(paste("Peak Tpref:", Tpref_peak))
-
-#### Function to calculate variance in core body temperature experienced throughout the trial #####
-
-calc_coreT_variance <- function(data, variance_type = c("std_error", "std_deviation", "coeff_variation"), exclude_start_minutes = 0, exclude_end_minutes = 0) {
+calc_coreT_variance <- function(data, variance_type = c("std_error", "std_deviation", "coeff_variation"), exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F) {
   # Ensure the body core temperature column exists
   if (!"core_T" %in% colnames(data)) {
     stop("The dataset does not contain a 'core_T' column. Please run file_prepare and calc_coreT")
@@ -559,6 +545,10 @@ calc_coreT_variance <- function(data, variance_type = c("std_error", "std_deviat
   # Convert exclude minutes to seconds
   exclude_start_seconds <- exclude_start_minutes * 60
   exclude_end_seconds <- exclude_end_minutes * 60
+  
+  if (exclude_acclimation) {
+    data <- data[data$trial_phase != "acclimation", ]
+  }
   
   # Exclude initial and final data if necessary
   start_time <- exclude_start_seconds
@@ -589,41 +579,7 @@ calc_coreT_variance <- function(data, variance_type = c("std_error", "std_deviat
 # print(paste("Standard Deviation:", variance_sd))
 # print(paste("Coefficient of Variation:", variance_cv))
 
-#### Function to plot cumulative changes in distance moved over time ####
-
-  plot_cumulative_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
-    if (!("time_sec" %in% colnames(data) && "distance" %in% colnames(data))) {
-      stop("The dataset does not contain 'time_sec' and/or 'distance' columns.")
-    }
-    
-    # Convert time_sec to numeric if not already
-    data$time_sec <- as.numeric(data$time_sec)
-    
-    # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
-    start_time <- exclude_start_minutes * 60
-    end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-    data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
-    
-    # Convert time in seconds to minutes
-    data$Time_min <- data$time_sec / 60
-    #substract first distance value to reset cumulative distance to 0
-    data$distance<-data$distance-data$distance[[1]]
-    
-    # Plot cumulative distance
-    plot <- ggplot(data, aes(x = Time_min, y = (distance))) +
-      geom_line() +
-      labs(title = "Cumulative Distance Moved During Trial",
-           x = "Time (minutes)",
-           y = "Distance Moved (cm)") +
-      theme_minimal()
-    
-    print(plot)
-  }
-
-# Example usage
-# plot_cumulative_distance(data, 240, 5)
-
-#### Function to calculate minimum gravitation time ####
+##### (CALCULATE) Minimum gravitation time ####
 
 calc_min_gravitation <- function(start_T, target_T, rate_of_change, print_results = T) {
   # Calculate the change in temperature
@@ -647,9 +603,55 @@ calc_min_gravitation <- function(start_T, target_T, rate_of_change, print_result
 # 
 # min_grav_time <- calc_min_gravitation(start_T, target_T, rate_of_change)
 
-#### Function to calculate time spent at extreme temperatures, near set limits ####
+##### (CALCULATE) Actual Gravitation time  ####
 
-calc_extremes <- function(data, threshold = 0.2*(max(data$max_T)-max(data$min_T)), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
+library(segmented)
+
+  calc_gravitation <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
+  
+  # Convert the time to numeric if not already
+  data$time_sec <- as.numeric(data$time_sec)
+  
+  # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
+  start_time <- exclude_start_minutes * 60
+  end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
+  
+  if (exclude_acclimation) {
+    data <- data[data$trial_phase != "acclimation", ]
+  }
+  
+  # Perform segmented regression
+  fit <- lm(core_T ~ time_h, data = data)
+  seg_fit <- segmented(fit, seg.Z = ~time_h, npsi = 1)
+  
+  # Get summary and breakpoint
+  seg_summary <- summary(seg_fit)
+  breakpoints <- seg_fit$psi[, "Est."]
+  
+  # Extract breakpoints
+  breakpoints <- seg_fit$psi[, "Est."]
+  
+  if (length(breakpoints) == 0) {
+    stop("No breakpoints found in the segmented model.")
+  }
+  
+  # Assume the first breakpoint as the gravitation time
+  gravitation_time <- breakpoints[1]-min(data$time_h)
+  
+  if (print_results) {
+  print(paste("Gravitation Time (hours):", gravitation_time))
+  }
+  
+  return(gravitation_time)
+}
+
+# Calculate gravitation time
+act_grav_time <- calc_gravitation(data)
+
+##### (CALCULATE) Time at extreme temperatures (near set limits) ####
+
+calc_extremes <- function(data, threshold = 0.2*(max(data$max_T)-max(data$min_T)), exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
   # Ensure necessary columns exist
   if (!("time_sec" %in% colnames(data) && "core_T" %in% colnames(data))) {
     stop("The dataset does not contain 'time_sec' and/or 'core_T' columns.")
@@ -662,6 +664,10 @@ calc_extremes <- function(data, threshold = 0.2*(max(data$max_T)-max(data$min_T)
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
+  
+  if (exclude_acclimation) {
+    data <- data[data$trial_phase != "acclimation", ]
+  }
   
   # Convert time in secxonds to minutes
   data$Time_min <- data$time_sec / 60
@@ -689,85 +695,13 @@ calc_extremes <- function(data, threshold = 0.2*(max(data$max_T)-max(data$min_T)
 }
 
 # # # Example usage
-# extreme_time_percent <- calc_extremes(data)
+extreme_time_percent <- calc_extremes(data)
 
-#### Function to plot histogram of movement speeds ####
-
-library(ggplot2)
-
-plot_speed_histogram <- function(data, binwidth = 0.1, exclude_start_minutes = 0, exclude_end_minutes = 0) {
-  # Ensure necessary column exists
-  if (!"velocity" %in% colnames(data)) {
-    stop("The dataset does not contain a 'velocity' column.")
-  }
-  
-  # Convert time_sec to numeric if not already
-  data$time_sec <- as.numeric(data$time_sec)
-  
-  # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
-  start_time <- exclude_start_minutes * 60
-  end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
-  
-  # Create the histogram plot
-  plot <- ggplot(data, aes(x = velocity)) +
-    geom_histogram(binwidth = binwidth, fill = "#F79518", color = "black") +
-    labs(title = "Histogram of Movement Speeds",
-         x = "Movement Speed (cm/s)",
-         y = "Frequency") +
-    # scale_y_log10()+
-    theme_classic()
-  
-  print(plot)
-}
-
-# Example usage
-# plot_speed_histogram(data, binwidth = 1, exclude_start_minutes = 240, exclude_end_minutes = 5)
-
-#### Function to plot movement speed against body core temperature ####
-
-plot_speed_vs_core_T <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
-  # Ensure necessary columns exist
-  if (!all(c("core_T", "distance", "time_sec") %in% colnames(data))) {
-    stop("The dataset does not contain one or more necessary columns: 'core_T', 'distance', 'time_sec'. Please run file_prepare function.")
-  }
-  
-  # Convert time_sec to numeric if not already
-  data$time_sec <- as.numeric(data$time_sec)
-  
-  # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
-  start_time <- exclude_start_minutes * 60
-  end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
-  
-  # Calculate movement speed as the difference in distance moved over time
-  data$Movement_Speed <- c(NA, diff(data$distance) / diff(data$time_sec))
-  
-  # Remove rows with NA values
-  data <- na.omit(data[, c("core_T", "Movement_Speed")])
-  
-  # Create the scatter plot
-  plot <- ggplot(data, aes(x = core_T, y = Movement_Speed)) +
-    geom_point(alpha = 0.5) +
-    geom_smooth(method = "loess", color = "#F79518", se = FALSE) +
-    labs(title = "Movement Speed vs. Core Body Temperature",
-         x = "Core Body Temperature (°C)",
-         y = "Movement Speed (cm/s)") +
-    theme_classic()
-  
-  return(plot)
-}
-
-# Example usage
-# Create the plot
-# speed_temp_plot <- plot_speed_vs_core_T(data, exclude_start_minutes = 240)
-# speed_temp_plot
-
-#### Function to plot temperatures in each side of the shuttlebox over time ####
+####### (INSPECT) Temperatures in each side of the shuttlebox over time ####
 
 library(ggplot2)
 
-plot_temperature_gradient <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+plot_T_gradient <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
   # Convert time_sec to numeric if not already
   data$time_sec <- as.numeric(data$time_sec)
   
@@ -788,16 +722,52 @@ plot_temperature_gradient <- function(data, exclude_start_minutes = 0, exclude_e
          x = "Time (hours)",
          y = "Temperature (°C)",
          color = "Temperature Side") +
-    theme_classic()
+    theme_light()
   
   print(plot)
 }
 
 # Example usage
 # Assuming 'data' contains temperature columns for both chambers
-# plot_temperature_gradient(data, 0, 0)
+plot_T_gradient(data, 0, 0)
 
-#### Function to plot core body temperature, Tpref, avoidance temperatures, segmented regression of changes in body core temperature during the trial #####
+####### (INSPECT) Core body temperature over time #####
+
+plot_T <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+  # Ensure necessary columns exist
+  if (!all(c("time_h", "core_T") %in% colnames(data))) {
+    stop("The dataset does not contain one or more necessary columns: 'time_h', 'core_T'.")
+  }
+  
+  # Convert the time to numeric if not already
+  data$time_sec <- as.numeric(data$time_sec)
+  
+  # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
+  start_time <- exclude_start_minutes * 60
+  end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
+  
+  # Plot data
+  plot <- ggplot(data, aes(x = time_h, y = core_T)) +
+    geom_point(alpha = 0.5, size = 0.4) +
+    geom_hline(yintercept = Tpref, linetype = "dashed", color = "#9EF1A4", size = 1.75) +
+    annotate("text", x = 0, hjust = 0, y = Tpref + 0.5, label = paste("Tpref:", round(Tpref, 1)), color = "#9EF1A4", size = 4.5)+
+    geom_hline(yintercept = Tavoid_lower, linetype = "dashed", color = "#9ECFF1", size = 1.75) +
+    annotate("text", x = 0, hjust = 0, y = Tavoid_lower + 0.5, label = paste("Low Tavoid:", round(Tavoid_lower, 1)), color = "#9ECFF1", size = 4.5)+
+    geom_hline(yintercept = Tavoid_upper, linetype = "dashed", color = "#F1AD9E", size = 1.75) +
+    annotate("text", x = 0, hjust = 0, y = Tavoid_upper + 0.5, label = paste("High Tavoid:", round(Tavoid_upper, 1)), color = "#F1AD9E", size = 4.5)+
+    labs(title = "Body Core Temperature vs Time",
+         x = "Time (h)",
+         y = "Body Core Temperature (°C)") +
+    theme_light()
+  
+  print(plot)
+}
+
+# Example usage
+# plot_T(data, Tpref, Tavoid_values[1], Tavoid_values[2])
+
+####### (INSPECT) Segmented regressions of core body temperature during trial #####
 
 library(ggplot2)
 library(segmented)
@@ -824,36 +794,42 @@ plot_T_segmented <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_st
   seg_summary <- summary(seg_fit)
   breakpoints <- seg_fit$psi[, "Est."]
   
-    # Plot data with segmented regression
+  # Plot data with segmented regression
   plot <- ggplot(data, aes(x = time_h, y = core_T)) +
     geom_point(alpha = 0.5, size = 0.4) +
     geom_line(aes(y = predict(seg_fit)), color = "#F79518", size = 1) +
     geom_hline(yintercept = Tpref, linetype = "dashed", color = "#9EF1A4", size = 1.75) +
+    annotate("text", x = min(data$time_h), hjust = 0, y = Tpref + 0.5, label = paste("Tpref:", round(Tpref, 1)), color = "#9EF1A4", size = 4.5)+
     geom_hline(yintercept = Tavoid_lower, linetype = "dashed", color = "#9ECFF1", size = 1.75) +
+    annotate("text", x = min(data$time_h) + exclude_start_minutes/60, hjust = 0, y = Tavoid_lower + 0.5, label = paste("Low Tavoid:", round(Tavoid_lower, 1)), color = "#9ECFF1", size = 4.5)+
     geom_hline(yintercept = Tavoid_upper, linetype = "dashed", color = "#F1AD9E", size = 1.75) +
+    annotate("text", x = min(data$time_h) + exclude_start_minutes/60, hjust = 0, y = Tavoid_upper + 0.5, label = paste("High Tavoid:", round(Tavoid_upper, 1)), color = "#F1AD9E", size = 4.5)+
     labs(title = "Body Core Temperature vs Time with Segmented Regression",
          x = "Time (h)",
          y = "Body Core Temperature (°C)") +
-    theme_classic()
+    theme_light()
   
   print(plot)
   
   return(list(summary = seg_summary, breakpoints = breakpoints))
   
-  }
+}
 
 # Example usage
 # plot_T_segmented(data, Tpref = Tpref, Tavoid_values[1], Tavoid_values[2])
 
-#### Function to plot changes in core body temperature over time, as well as Tpref, and upper and lower avoidance temperatures, but WITHOUT segmented regression lines #####
 
-plot_T <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_start_minutes = 0, exclude_end_minutes = 0) {
-  # Ensure necessary columns exist
-  if (!all(c("time_h", "core_T") %in% colnames(data))) {
-    stop("The dataset does not contain one or more necessary columns: 'time_h', 'core_T'.")
+####### (INSPECT) Histogram of time spent at different core body temperatures ####
+
+library(ggplot2)
+
+plot_coreT_histogram <- function(data, bin_size = 0.1, exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F) {
+  # Ensure the body core temperature column exists
+  if (!"core_T" %in% colnames(data)) {
+    stop("The dataset does not contain a 'core_T' column. Please run file_prepare and calc_coreT")
   }
   
-  # Convert the time to numeric if not already
+  # Convert time_sec to numeric if not already
   data$time_sec <- as.numeric(data$time_sec)
   
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
@@ -861,30 +837,117 @@ plot_T <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_start_minute
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
-  # Plot data
-  plot <- ggplot(data, aes(x = time_h, y = core_T)) +
-    geom_point(alpha = 0.5, size = 0.4) +
-    geom_hline(yintercept = Tpref, linetype = "dashed", color = "#9EF1A4", size = 1.75) +
-    geom_hline(yintercept = Tavoid_lower, linetype = "dashed", color = "#9ECFF1", size = 1.75) +
-    geom_hline(yintercept = Tavoid_upper, linetype = "dashed", color = "#F1AD9E", size = 1.75) +
-    labs(title = "Body Core Temperature vs Time with Segmented Regression",
-         x = "Time (h)",
-         y = "Body Core Temperature (°C)") +
-    theme_classic()
+  
+  if (exclude_acclimation) {
+    data <- data[data$trial_phase != "acclimation", ]
+  }
+  
+  
+  # Calculate the duration of each bin in minutes
+  data$Time_min <- data$time_sec / 60
+  total_time <- max(data$Time_min, na.rm = TRUE)
+  
+  # Create the histogram data
+  hist_data <- hist(data$core_T, breaks = seq(floor(min(data$core_T, na.rm = TRUE)),
+                                                      ceiling(max(data$core_T, na.rm = TRUE)),
+                                                      by = bin_size), plot = FALSE)
+  
+  # Find the peak value
+  Tpref_peak <- hist_data$mids[which.max(hist_data$counts)]
+  
+  # Create the histogram plot
+  hist_plot <- ggplot(data, aes(x = core_T)) +
+    geom_histogram(binwidth = bin_size, aes(y = (after_stat(count) / sum(after_stat(count))) * 100), fill = "#F79518", color = "black") +
+    geom_vline(xintercept = Tpref_peak, color = "#9EF1A4", linetype = "dashed", linewidth = 2) +
+    labs(title = "Histogram of Percent of Time Spent at Different Body Core Temperatures",
+         subtitle = paste("Peak Tpref:", round(Tpref_peak, 2), "°C"),
+         x = "Body Core Temperature (°C)",
+         y = "Percent of Total Time (%)") +
+    theme_light()
+  
+  print(hist_plot)
+  print(paste("Peak Tpref:", Tpref_peak))
+  # return(Tpref_peak)
+}
+
+# # Example usage
+# plot_coreT_histogram(data, bin_size = 0.1, exclude_start_minutes = 240, exclude_end_minutes = 5)
+
+####### (INSPECT) Histogram of selected variable ####
+
+library(ggplot2)
+
+plot_histogram <- function(data, column, binwidth = 0.1, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+  # Ensure necessary column exists
+  if (!paste(column) %in% colnames(data)) {
+    stop(paste0("The dataset does not contain a '",column,"' column"))
+  }
+  
+  # Convert time_sec to numeric if not already
+  data$time_sec <- as.numeric(data$time_sec)
+  
+  # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
+  start_time <- exclude_start_minutes * 60
+  end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
+  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
+  
+  # Create the histogram plot
+  plot <- ggplot(data, aes_string(x = column)) +
+    geom_histogram(binwidth = binwidth, fill = "#F79518", color = "black") +
+    labs(title = paste("Histogram of", column),
+         x = column,
+         y = "Frequency") +
+    theme_light()
   
   print(plot)
 }
 
 # Example usage
-# plot_T(data, Tpref, Tavoid_values[1], Tavoid_values[2])
+# plot_histogram(data, "core_T", binwidth = 0.1, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
-##### Function to calculate actual gravitation time ####
+####### (INSPECT) Cumulative distance changes over time ####
 
-library(segmented)
+  plot_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+    if (!("time_sec" %in% colnames(data) && "distance" %in% colnames(data))) {
+      stop("The dataset does not contain 'time_sec' and/or 'distance' columns.")
+    }
+    
+    # Convert time_sec to numeric if not already
+    data$time_sec <- as.numeric(data$time_sec)
+    
+    # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
+    start_time <- exclude_start_minutes * 60
+    end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
+    data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
+    
+    # Convert time in seconds to minutes
+    data$Time_min <- data$time_sec / 60
+    #substract first distance value to reset cumulative distance to 0
+    data$distance<-data$distance-data$distance[[1]]
+    
+    # Plot cumulative distance
+    plot <- ggplot(data, aes(x = Time_min, y = (distance))) +
+      geom_line(color = 'orange') +
+      labs(title = "Cumulative Distance Moved During Trial",
+           x = "Time (minutes)",
+           y = "Distance Moved (cm)") +
+      theme_light()
+    
+    print(plot)
+  }
 
-  calc_gravitation <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = T) {
+# Example usage
+# plot_distance(data)
+
+####### (INSPECT) Movement speed vs body core temperature ####
+
+plot_speed_coreT <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+  # Ensure necessary columns exist
+  if (!all(c("core_T", "distance", "time_sec") %in% colnames(data))) {
+    stop("The dataset does not contain one or more necessary columns: 'core_T', 'distance', 'time_sec'. Please run file_prepare function.")
+  }
   
-  # Convert the time to numeric if not already
+  # Convert time_sec to numeric if not already
   data$time_sec <- as.numeric(data$time_sec)
   
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
@@ -892,250 +955,116 @@ library(segmented)
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
-  # Perform segmented regression
-  fit <- lm(core_T ~ time_h, data = data)
-  seg_fit <- segmented(fit, seg.Z = ~time_h, npsi = 1)
+  # Calculate movement speed as the difference in distance moved over time
+  data$Movement_Speed <- c(NA, diff(data$distance) / diff(data$time_sec))
   
-  # Get summary and breakpoint
-  seg_summary <- summary(seg_fit)
-  breakpoints <- seg_fit$psi[, "Est."]
+  # Remove rows with NA values
+  data <- na.omit(data[, c("core_T", "Movement_Speed")])
   
-  # Extract breakpoints
-  breakpoints <- seg_fit$psi[, "Est."]
+  # Create the scatter plot
+  plot <- ggplot(data, aes(x = core_T, y = Movement_Speed)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(method = "loess", formula = 'y ~ x', color = "#F79518", se = FALSE) +
+    labs(title = "Movement Speed vs. Core Body Temperature",
+         x = "Core Body Temperature (°C)",
+         y = "Movement Speed (cm/s)") +
+    theme_light()
   
-  if (length(breakpoints) == 0) {
-    stop("No breakpoints found in the segmented model.")
-  }
-  
-  # Assume the first breakpoint as the gravitation time
-  gravitation_time <- breakpoints[1]
-  
-  if (print_results) {
-  print(paste("Gravitation Time (hours):", gravitation_time))
-  }
-  
-  return(gravitation_time)
+  return(plot)
 }
 
-# Calculate gravitation time
-# act_grav_time <- calc_gravitation(data)
+# Example usage
+# plot_speed_coreT(data, exclude_start_minutes = 240)
 
-##### Function to calculate and plot interval means for shuttling rate over time ####
+####### (INSPECT) Interval plot of selected variable #####
 
-library(ggplot2)
-  
-  ####DEZE###
+variable = 'shuttle'
 
-shuttling_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes = 0, exclude_end_minutes = 0) {
-  # Ensure necessary columns exist
-  if (!all(c("time_sec", "shuttle") %in% colnames(data))) {
-    stop("The dataset does not contain one or more necessary columns: 'time_sec', 'shuttle'.")
-  }
-  
-  # Convert time_sec to numeric if not already
+plot_interval <- function(data, column, interval_minutes = 10, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+
+    # Convert time_sec to numeric if not already
   data$time_sec <- as.numeric(data$time_sec)
-
+  
   # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
   start_time <- exclude_start_minutes * 60
   end_time <- max(data$time_sec, na.rm = T) - (exclude_end_minutes * 60)
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
-
+  
   # Calculate time intervals
   data$t_interval <- floor((data$time_sec - start_time) / (interval_minutes * 60)) * interval_minutes
-
+  
   # Calculate mean shuttling rate for each interval
-  shuttling_rate <- aggregate(shuttle ~ t_interval, data = data, FUN = function(x) mean(x, na.rm = TRUE))
-  
-  shuttling_rate$t_interval<-shuttling_rate$t_interval/60
-  shuttling_rate$shuttle <- shuttling_rate$shuttle*60
+  rate <- aggregate(data[[column]] ~ t_interval, data = data, FUN = function(x) mean(x, na.rm = TRUE))
+  names(rate)[names(rate) == "data[[column]]"] <- column
+    
+ rate$t_interval<-rate$t_interval/60
+ 
+ if (column == "shuttle") {rate[[column]] <- rate[[column]]*60}
+ 
   # Convert Time_interval to numeric for plotting
-  shuttling_rate$t_interval <- as.numeric(shuttling_rate$t_interval)
-
+  rate$t_interval <- as.numeric(rate$t_interval)
+  
   # Plot the mean shuttling rate
-  plot <- ggplot(shuttling_rate, aes(x = t_interval, y = shuttle)) +
+  plot <- ggplot(rate, aes_string(x = "t_interval", y = column)) +
     geom_line(color = "black") +
     geom_point(color = "#F79518") +
-    labs(title = "Mean Shuttling Rate Over the Trial",
+    labs(title = paste("Mean ", column,  "over the trial"),
          x = "Time (h)",
-         y = "Mean Shuttling Rate (shuttles/hour)") +
-    theme_classic()
-
-  print(plot)
-
-  return(shuttling_rate)
-  }
-
-# Example usage
-shuttling_aggregated(data, interval_minutes = 60)
-
-##### Function to calculate and plot interval means for speed over time ####
-
-library(ggplot2)
-
-speed_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes = 0, exclude_end_minutes = 0) {
-  # Ensure necessary columns exist
-  if (!all(c("time_sec", "velocity") %in% colnames(data))) {
-    stop("The dataset does not contain one or more necessary columns: 'time_sec', 'velocity'.")
-  }
-  
-  # Convert time_sec to numeric if not already
-  data$time_sec <- as.numeric(data$time_sec)
-  
-  # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
-  start_time <- exclude_start_minutes * 60
-  end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
-  
-  # Calculate time intervals
-  data$t_interval <- floor((data$time_sec - start_time) / (interval_minutes * 60)) * interval_minutes
-  
-  # Calculate mean movement speed for each interval
-  movement_speed <- aggregate(velocity ~ t_interval, data = data, FUN = function(x) mean(x, na.rm = TRUE))
-  
-  # Convert Time_interval to numeric for plotting
-  movement_speed$t_interval <- as.numeric(movement_speed$t_interval)
-  
-  # Plot the mean movement speed
-  plot <- ggplot(movement_speed, aes(x = t_interval/60, y = velocity)) +
-    geom_line(color = "black") +
-    geom_point(color = "#F79518") +
-    labs(title = "Mean Movement Speed Over the Trial",
-         x = "Time (h)",
-         y = "Mean Movement Speed (cm/s)") +
-    theme_classic()
+         y = paste("Mean ", column))+
+    theme_light()
   
   print(plot)
   
-  return(movement_speed)
+  return(rate)
 }
 
 # Example usage
-speed_aggregated(data, interval_minutes = 60, exclude_end_minutes = 5)
+# plot_interval(data, column = "shuttle", interval_minutes = 60)
 
-##### Function to calculate and plot interval means for body core temperature over time ####
-
-library(ggplot2)
-
-coreT_aggregated <- function(data, interval_minutes = 10, exclude_start_minutes = 0, exclude_end_minutes = 0) {
-  # Ensure necessary columns exist
-  if (!all(c("time_sec", "core_T") %in% colnames(data))) {
-    stop("The dataset does not contain one or more necessary columns: 'time_sec', 'core_T'.")
-  }
-  
-  # Convert time_sec to numeric if not already
-  data$time_sec <- as.numeric(data$time_sec)
-  
-  # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
-  start_time <- exclude_start_minutes * 60
-  end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
-  
-  # Calculate time intervals
-  data$t_interval <- floor((data$time_sec - start_time) / (interval_minutes * 60)) * interval_minutes
-
-  # Calculate mean preferred temperature for each interval
-  coreT_aggregated <- aggregate(core_T ~ t_interval, data = data, FUN = function(x) mean(x, na.rm = TRUE))
-  
-  # Convert Time_interval to numeric for plotting
-  coreT_aggregated$t_interval <- as.numeric(coreT_aggregated$t_interval)
-  
-  # Plot the mean preferred temperature
-  plot <- ggplot(coreT_aggregated, aes(x = t_interval/60, y = core_T)) +
-    geom_line(color = "black") +
-    geom_point(color = "#F79518") +
-    labs(title = "Mean Body Core Temperature Over the Trial",
-         x = "Time (h)",
-         y = "Mean Core Temperature (°C)") +
-    theme_classic()
-  
-  print(plot)
-  
-  return(coreT_aggregated)
-}
-
-# Example usage
-coreT_aggregated(data, interval_minutes = 60, exclude_start_minutes = 10, exclude_end_minutes = 5)
-
-##### Function to calculate interval means for speed, shuttling rate, and coreT, then produces a correlation matrix ####
+####### (INSPECT) Produce a correlation matrix ####
 
 library(ggplot2)
 
-mean_correlations_scatterplots <- function(data, interval_minutes = 10, exclude_start_minutes = 0, exclude_end_minutes = 0) {
-  # Ensure necessary columns exist
-  if (!all(c("time_sec", "velocity", "core_T", "shuttle") %in% colnames(data))) {
-    stop("The dataset does not contain one or more necessary columns: 'time_sec', 'velocity', 'core_T', 'shuttle'.")
-  }
-  
-  # Convert time_sec to numeric if not already
-  data$time_sec <- as.numeric(data$time_sec)
-  
-  # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
-  start_time <- exclude_start_minutes * 60
-  end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
-  data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
-  
-  # Calculate time intervals
-  data$t_interval <- floor((data$time_sec - start_time) / (interval_minutes * 60)) * interval_minutes
-  
-  # Calculate mean values for velocity, Tpref (core_T), and shuttling rate for each interval
-  mean_data <- aggregate(cbind(velocity, core_T, shuttle) ~ t_interval, data = data, 
-                         FUN = function(x) mean(x, na.rm = TRUE))
-  
-  # Calculate correlation matrix
-  correlation_matrix <- cor(mean_data[, -1], use = "complete.obs")
-  
-  # Print the correlation matrix
-  print(correlation_matrix)
-  
-  # Create scatterplots for pairwise comparisons
-  plot1 <- ggplot(mean_data, aes(x = velocity, y = core_T)) +
-    geom_point(color = "#F79518") +
-    geom_smooth(method = "lm", color = "black", se = FALSE) +
-    labs(title = "Mean velocity vs Mean Tpref",
-         x = "Mean velocity (cm/s)",
-         y = "Mean Tpref (°C)") +
-    theme_classic()
-  
-  plot2 <- ggplot(mean_data, aes(x = velocity, y = shuttle)) +
-    geom_point(color = "#F79518") +
-    geom_smooth(method = "lm", color = "black", se = FALSE) +
-    labs(title = "Mean velocity vs Mean Shuttling Rate",
-         x = "Mean velocity (cm/s)",
-         y = "Mean Shuttling Rate") +
-    theme_classic()
-  
-  plot3 <- ggplot(mean_data, aes(x = core_T, y = shuttle)) +
-    geom_point(color = "#F79518") +
-    geom_smooth(method = "lm", color = "black", se = FALSE) +
-    labs(title = "Mean Tpref vs Mean Shuttling Rate",
-         x = "Mean Tpref (°C)",
-         y = "Mean Shuttling Rate") +
-    theme_classic()
-  
-  # Print the plots
-  print(plot1)
-  print(plot2)
-  print(plot3)
-  
-  return(list(mean_data = mean_data, correlation_matrix = correlation_matrix, plots = list(plot1 = plot1, plot2 = plot2, plot3 = plot3)))
-
+correlation_matrix <- function(data, columns, exclude_start_minutes = 0, exclude_end_minutes = 0, interval_minutes = 10) {
+    
+    # Exclude rows based on the exclude_start_minutes and exclude_end_minutes parameters
+    start_time <- exclude_start_minutes * 60
+    end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
+    data_2 <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
+    
+    # Create time intervals
+    data_2$t_interval <- floor((data_2$time_sec - start_time) / (interval_minutes * 60)) * interval_minutes
+    data
+    # Compute mean values for selected columns within each interval
+    mean_data_2 <- aggregate(data_2[, columns, drop = FALSE], 
+                             by = list(t_interval = data_2$t_interval), 
+                             FUN = function(x) mean(x, na.rm = TRUE))
+    
+    # Function to display correlation values
+    panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor = 1.2, ...) {
+      r <- cor(x, y, use = "complete.obs")  # Compute correlation
+      txt <- formatC(r, format = "f", digits = digits)  # Format value
+      txt <- paste0(prefix, txt)  # Append prefix if needed
+      
+      # Place text at the center of the panel
+      text(mean(range(x)), mean(range(y)), txt, cex = cex.cor)
+    }
+    
+    # Generate correlation matrix plot
+    pairs(
+      mean_data[, columns, drop = FALSE],  # Use mean-aggregated data
+      lower.panel = panel.smooth,  # Scatter plots with smoothing
+      upper.panel = panel.cor  # Correlation values
+    )
   }
 
-# # Example usage
-results <- mean_correlations_scatterplots(data, interval_minutes = 10, exclude_start_minutes = 10, exclude_end_minutes = 5)
-results$mean_data
-results$correlation_matrix
-results$plots$plot3
-# 
-# correlation_matrix
+# correlation_matrix(data = data, columns = c("velocity", "core_T", "shuttle"))
 
-
-# results
-##### Function to plot a 3D animation of fish movements at selected time intervals, with time as a dimension ####
+####### (INSPECT) 3D animation of fish movements at selected time intervals, with time as a dimension ####
 
 library(rgl)
 
-animate_movements <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+animate_movements <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, speed = 100) {
   # Ensure necessary columns exist
   if (!all(c("x_pos", "y_pos", "time_sec", "core_T") %in% colnames(data))) {
     stop("The dataset does not contain one or more necessary columns: 'x_pos', 'y_pos', 'time_sec', 'core_T'.")
@@ -1150,28 +1079,47 @@ animate_movements <- function(data, exclude_start_minutes = 0, exclude_end_minut
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
   # Set up 3D plot
-  plot3d(data$x_pos, data$y_pos, data$time_sec, type = "l", col = "black", alpha = 0.15,
+  plot3d(data$x_pos, data$y_pos, data$time_sec, type = "l", col = "darkgrey", alpha = 0.15,
          xlab = "X Position", ylab = "Y Position", zlab = "Time (seconds)")
   
   # Determine color scaling based on Tpref
   colors <- colorRampPalette(c("royalblue3", "red2"))(length(unique(data$core_T)))
   data$color <- colors[as.numeric(cut(data$core_T, breaks = length(colors)))]
   
-  # Animate the plot
-  for (i in seq_len(nrow(data))) {
-    points3d(data$x_pos[i], data$y_pos[i], data$time_sec[i], col = data$color[i], size = 5)
-    Sys.sleep(0.01)
+  # # Animate the plot
+  # for (i in seq(1, nrow(data))) {  # Update every 10 points
+  #   points3d(data$x_pos[i], data$y_pos[i], data$time_sec[i], col = data$color[i], size = 5)
+  # }
+  # 
+  # play3d(spin3d(axis = c(0, 0, 1), rpm = 100), duration = 5)
+  
+  run_speed = 10^speed^speed
+  
+  # Function to update the animation
+  animate_step <- function(time) {
+    index <- floor(time * run_speed) + 1  # Adjust speed
+    if (index > nrow(data)) return()
+    points3d(data$x_pos[index], data$y_pos[index], data$time_sec[index], col = data$color[index], size = 5)
   }
+  
+  # Use play3d with a time sequence
+  play3d({
+    for (i in seq_len(nrow(data))) {
+      points3d(data$x_pos[i], data$y_pos[i], data$time_sec[i], col = data$color[i], size = 5)
+      Sys.sleep(1 / (run_speed * 100))  # Adjust speed dynamically
+    }
+  }, duration = nrow(data) / (run_speed * 10))
 }
 
-# Example usage
-# animate_movements(data, exclude_end_minutes = 5)
 
-##### Function to produce a heat map of fish locations over the trial ####
+# Example usage
+# animate_movements(data, exclude_end_minutes = 5, speed = 1000)
+
+####### (INSPECT) Heat map of fish locations over the trial ####
 
 library(ggplot2)
 
-plot_heatmap <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+plot_heatmap <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F) {
   # Ensure necessary columns exist
   if (!all(c("x_pos", "y_pos", "time_sec") %in% colnames(data))) {
     stop("The dataset does not contain one or more necessary columns: 'x_pos', 'y_pos', 'time_sec'.")
@@ -1185,6 +1133,10 @@ plot_heatmap <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 
   end_time <- max(data$time_sec, na.rm = TRUE) - (exclude_end_minutes * 60)
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
+  if (exclude_acclimation) {
+    data <- data[data$trial_phase != "acclimation", ]
+  }
+  
   # Plot heatmap
   heatmap_plot <- ggplot(data, aes(x = x_pos, y = y_pos)) +
     stat_density2d(aes(fill = ..density..), geom = "raster", contour = FALSE) +
@@ -1192,7 +1144,7 @@ plot_heatmap <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 
     labs(title = "Heat Map of Fish Locations within the Shuttlebox",
          x = "X Position",
          y = "Y Position") +
-    theme_classic() +
+    theme_light() +
     coord_fixed()
   
   return(heatmap_plot)
@@ -1202,88 +1154,255 @@ plot_heatmap <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 
 # heatmap_plot <- plot_heatmap(data)
 # print(heatmap_plot)
 
-##### Function to visualise links between shuttling and activity across individuals in the entire project dataset ####
+####### (PREPARE) Read shuttlesoft project from directory ####
+
+read_shuttlesoft_project <- function (metadata, directory = getwd()){
+  
+  # Check if metadata is specified and give warnings for what happens if data is missing
+  if (missing(metadata)) {
+    warning("Metadata not provided; cannot define one or more of the following variables: 'trial_start', 'a-value', 'b-value', 'initial_temp.'")
+  } else {
+    
+    # If the metadata is present, ensure necessary columns exist in the metadata
+    if (!all(c("file_name", "trial_start", "mass", "a_value", "b_value") %in% colnames(metadata))) {
+      warning("The metadata does not contain one or more necessary columns: 'file_name', 'trial_start', 'mass', 'a_value', 'b_value'.")
+    }
+    
+    # Find rows with NA in specified columns
+    columns_to_check <- intersect(c("file_name", "trial_start", "mass", "a_value", "b_value"), colnames(metadata))
+    rows_with_na <- apply(metadata[columns_to_check], 1, function(row) any(is.na(row)))
+    
+    # If there are any rows with NA, throw warning mentioning file names
+    if (any(rows_with_na)) {
+      names_with_na <- metadata$file_name[rows_with_na]
+      warning (paste("The metadata contains NA values in one or more of these columns: 'file_name', 'trial_start', 'mass', 'a_value', 'b_value'
+",paste(names_with_na, collapse = "\n ")))
+    }
+    
+    #Ensure necessary columns are in the right format
+    if (all(grepl("^\\d{2}:\\d{2}:\\d{2}$", metadata$trial_start))==F){
+      message("Warning: One or more entries in trial_start are not in an hh:mm:ss format")
+    }
+  }
+  
+  # Search for all the .txt files in the specified directory
+  txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
+  
+  # Check if all files are represented in the metadata
+  file_names <- basename(txt_files)
+  missing_files <- setdiff(file_names, metadata$file_name)
+  if (length(missing_files) > 0) {
+    stop(paste("The following files are not represented in metadata:", 
+               paste(missing_files, collapse = "\n ")))
+  }
+  
+  # Read those text files and compile them into a list
+  data_read <- lapply(txt_files, read_shuttlesoft, metadata = metadata, multidat = T)
+  
+  # Name each list element as the directory of the text files
+  names(data_read)<-txt_files
+  
+  return(data_read)
+}
+
+####### (PREPARE) Compile project data into single dataframe ####
+compile_project_data<-function(data_read){
+  
+  # Prepare the data using file_prepare. Multidat is TRUE because this will suppress warnings from preparing each data file separately
+  data_list <- lapply(data_read, file_prepare)
+  processed_list <- lapply(data_list, calc_coreT)
+  combined_df <- do.call(rbind, processed_list)
+  rownames(combined_df)<-NULL
+  return(combined_df)
+}
+
+##### (CALCULATE) Calculate variables of project read object ####
+calc_project_results <- function(data_read,
+                                 calculate_distance = F,
+                                 pixel_to_cm = T,
+                                 exclude_acclimation = F,
+                                 exclude_start_minutes = 0, 
+                                 exclude_end_minutes = 0,
+                                 Tpref_method = "median",
+                                 Tavoid_percentiles = c(0.05, 0.95),
+                                 textremes_threshold = expression(0.2 * (max(df$max_T) - max(df$min_T))),
+                                 core_T_variance_type = "std_error"){
+  message("Initialising...")
+  
+  # Prepare the data using file_prepare. Multidat is TRUE because this will suppress warnings from preparing each data file separately
+  data_list <- lapply(data_read, file_prepare)
+  
+  
+  # Create a function that pulls all the information from a datafile in one go, using the functions specified earlier 
+  apply_functions <- function(df, df_name) {
+    
+    # Define the fileID the function is currently considering
+    fileID <- unique(df$fileID)
+    
+    # Calculate core body temperature
+    df<-calc_coreT(df)
+    
+    # Calculate distance covered if true
+    if (calculate_distance) df<-calc_distance (df, pixel_to_cm)
+    
+    # Exclude acclimation period if requested from the start. Acclimation period is defined in file_prepare
+    if(exclude_acclimation) {
+      df <- subset(df, df$trial_phase != "acclimation") 
+    }
+    
+    # Subset custom time window
+    df <- df[df$time_sec >= exclude_start_minutes * 60 & df$time_sec <= max(data$time_sec) - (exclude_end_minutes * 60), ]
+    
+    textremes_th <- eval(textremes_threshold) 
+    
+    # Calculate all variables using default settings (these can be edited in the main function)
+    Tpref <- calc_Tpref(df, method = Tpref_method, print_results = F)
+    grav_time <- calc_gravitation(df, print_results = F)
+    tot_distance <- calc_tot_distance(df, print_results = F)
+    Tavoid <- calc_Tavoid(df, percentiles = Tavoid_percentiles, print_results = F)
+    Tpref_range <- Tavoid[2] - Tavoid[1]
+    textremes <- calc_extremes(df, threshold = textremes_th, print_results = F)
+    textremes_tot <- textremes[1]+textremes[2]
+    core_T_variance <- calc_coreT_variance(df, variance_type = core_T_variance_type)
+    nr_shuttles <- calc_shuttling_frequency(df, print_results = F)
+    chamber_seconds <- calc_occupancy_time(df, print_results = F)
+    
+    # Return a list of the variables you want
+    return(list(fileID = fileID,
+                Tpref = Tpref,
+                Tpref_range = Tpref_range,
+                grav_time = grav_time, 
+                tot_distance = tot_distance,
+                Tavoid = Tavoid,
+                textremes = textremes,
+                textremes_tot = textremes_tot,
+                core_T_variance = core_T_variance,
+                nr_shuttles = nr_shuttles,
+                chamber_seconds = chamber_seconds))
+  }
+  
+  # Apply functions to each dataframe in the list and collect results
+  results <- do.call(rbind, lapply(names(data_list), function(name, total) {
+    
+    current_iter <- which(names(data_list) == name)  
+    message("Processing dataset ", current_iter, " of ", total, " (", round((current_iter / total) * 100, 2), "% complete)")  
+    
+    # Apply the functions
+    func_results <- apply_functions(df = data_list[[name]], df_name = name)
+    
+    # Combine results into a data frame
+    data.frame(
+      fileID = func_results$fileID,
+      Tpref = func_results$Tpref,
+      Tpref_range = func_results$Tpref_range,
+      grav_time  = func_results$grav_time,
+      tot_distance  = func_results$tot_distance,
+      Tavoid_lower  = func_results$Tavoid[1],
+      Tavoid_upper = func_results$Tavoid[2],
+      t_near_min  = func_results$textremes[1],
+      t_near_max  = func_results$textremes[2],
+      t_near_limits = func_results$textremes_tot,
+      core_T_variance  = func_results$core_T_variance,
+      nr_shuttles  = func_results$nr_shuttles,
+      seconds_in_DECR = func_results$chamber_seconds[1],
+      seconds_in_INCR = func_results$chamber_seconds[2]
+      
+    )
+    
+  }, total = length(data_list)))
+  
+  # Reset rownames as they have acquired names from the list
+  rownames(results) <- NULL
+  
+  return(c(results))
+}
+
+
+praise()
+
+####### (INSPECT) Link shuttling and activity across individuals in the entire project dataset ####
 
 library(ggplot2)
 
-plot_distance_vs_shuttles <- function(proj_data) {
+plot_distance_vs_shuttles() <- function(proj_data) {
   # Ensure necessary columns exist
-  if (!all(c("ID", "distance", "shuttles") %in% colnames(proj_data))) {
-    stop("The dataset does not contain one or more necessary columns: 'ID', 'distance', 'shuttles'.")
+  if (!all(c("fileID", "distance", "nr_shuttles") %in% colnames(proj_data))) {
+    stop("The dataset does not contain one or more necessary columns: 'fileID', 'distance', 'nr_shuttles'.")
   }
   
   # Create the plot
-  plot <- ggplot(proj_data, aes(x = distance, y = shuttles, label = ID)) +
+  plot <- ggplot(proj_data, aes(x = distance, y = nr_shuttles, label = fileID)) +
     geom_point(color = "#F79518") +
     geom_text(vjust = -1, hjust = 1.5) +
     labs(title = "Relationship between Distance Moved and Shuttles across Individuals",
          x = "Distance Moved (cm)",
          y = "Number of Shuttles") +
-    theme_classic()
+    theme_light()
   
   print(plot)
 }
 
 # Example usage
-# plot_distance_vs_shuttles(proj_data)
+plot_activity(glasgow_results)
 
-##### Function to visualise links between time near system temperature limits and activity across individuals in the entire project dataset ####
+####### (INSPECT) Link time near system temperature limits and activity across individuals in the entire project dataset ####
 
 library(ggplot2)
 
-plot_limits_vs_distance <- function(proj_data) {
+plot_limits_vs_distance() <- function(proj_data) {
   # Ensure necessary columns exist
-  if (!all(c("ID", "distance", "time_near_limits") %in% colnames(proj_data))) {
-    stop("The dataset does not contain one or more necessary columns: 'ID', 'distance', 'time_near_limits'.")
+  if (!all(c("fileID", "distance", "t_near_limits") %in% colnames(proj_data))) {
+    stop("The dataset does not contain one or more necessary columns: 'fileID', 'distance', 't_near_limits'.")
   }
   
   # Create the plot
-  plot <- ggplot(proj_data, aes(x = time_near_limits, y = distance, label = ID)) +
+  plot <- ggplot(proj_data, aes(x = t_near_limits, y = distance, label = fileID)) +
     geom_point(color = "#F79518") +
     geom_text(vjust = -1, hjust = 1.5) +
     labs(title = "Relationship between Time Near Limits and Distance Moved",
          x = "Time Near Limits (minutes)",
          y = "Distance Moved (cm)") +
-    theme_classic()
+    theme_light()
   
   print(plot)
 }
 
 # Example usage
-# plot_limits_vs_distance(proj_data)
+plot_limits(glasgow_results)
 
 
-##### Function to visualise links between time near system temperature limits and shuttles across individuals in the entire project dataset ####
+####### (INSPECT) Link time near system temperature limits and shuttles across individuals in the entire project dataset ####
 
 library(ggplot2)
 
-plot_limits_vs_shuttles <- function(proj_data) {
+plot_limits_vs_shuttles <- function(proj_data, id_col) {
   # Ensure necessary columns exist
-  if (!all(c("ID", "time_near_limits", "shuttles") %in% colnames(proj_data))) {
-    stop("The dataset does not contain one or more necessary columns: 'ID', time_near_limits', 'shuttles'.")
+  if (!all(c("fileID", "t_near_limits", "nr_shuttles") %in% colnames(proj_data))) {
+    stop("The dataset does not contain one or more necessary columns: 'fileID', t_near_limits', 'nr_shuttles'.")
   }
   
   # Create the plot
-  plot <- ggplot(proj_data, aes(x = time_near_limits, y = shuttles, label = ID)) +
+  plot <- ggplot(proj_data, aes(x = t_near_limits, y = nr_shuttles, label = fileID)) +
     geom_point(color = "#F79518") +
     geom_text(vjust = -1, hjust = 1.5) +
     labs(title = "Relationship between Time Near Limits and Number of shuttles",
          x = "Time Near Limits (minutes)",
          y = "Shuttles") +
-    theme_classic()
+    theme_light()
   
   print(plot)
 }
 
 # Example usage
-# plot_limits_vs_shuttles(proj_data)
+plot_limits_vs_shuttles(glasgow_results)
 
-##### Function to perform PCA with shuttles, distance moved, and time near limits, then plot PC scores vs Tpref ####
+####### (INSPECT) PCA with shuttles, distance moved, and time near limits, then plot PC scores vs Tpref ####
 
 library(FactoMineR)
 library(factoextra)
 library(ggplot2)
 library(dbscan)
+
 
 pca <- function(data, mahalanobis_th = 0.7, dbscan_th = 1, print_labels = TRUE, id_col = "fileID", var_col = "Tpref") {
   
@@ -1338,7 +1457,7 @@ pca <- function(data, mahalanobis_th = 0.7, dbscan_th = 1, print_labels = TRUE, 
     labs(title = paste0("PCA Scores from the First Component vs ",var_col," with 95% CI"),
          x = "PCA First Component Score",
          y = paste0(var_col)) +
-    theme_classic()
+    theme_light()
   
   pca_loadings <- pca$var$coord
   
@@ -1346,25 +1465,19 @@ pca <- function(data, mahalanobis_th = 0.7, dbscan_th = 1, print_labels = TRUE, 
                pca_loadings = pca_loadings,
                pca_scores = pca_scores,
                outliers = combined_outliers, 
-               plots = list (p1 = p1, p2 = p2, p3 = p3, p4 = p4))
-
+               plots = list (screeplot = p1, biplot = p2, pc1contributionplot = p3, tprefplot = p4))
+  
   return(output)
   
 }
 
-# Example usage
-results <- pca(glasgow_results, print_labels = F)
-results$outliers
-results$plots$p1
-results$pca_loadings
-
 # loadings
-##### Function to create frequency distributions for key measures across individuals in the data set ####
+####### (INSPECT) Frequency distributions for key measures across individuals in the data set ####
 
 library(ggplot2)
 library(gridExtra)
 
-plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper = 1, bin_size_Tavoid_lower = 1, bin_size_distance = 2000, bin_size_shuttles = 20, bin_size_time_near_limits = 5, nr_sd = 2, id_col = "fileID") {
+plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper = 1, bin_size_Tavoid_lower = 1, bin_size_distance = 2000, bin_size_shuttles = 20, bin_size_t_near_limits = 5, nr_sd = 2, iqr_multiplier = 1.5, id_col = "fileID") {
   # Ensure necessary columns exist
   required_columns <- c("Tpref", "Tavoid_upper", "Tavoid_lower", "distance", "nr_shuttles", "t_near_limits")
   if (!all(required_columns %in% colnames(proj_data))) {
@@ -1385,7 +1498,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
     labs(title = "Distribution of Tpref", 
          x = "Tpref (°C)", 
          y = "Frequency") +
-    theme_classic()
+    theme_light()
   
   # p2: Distribution of Tavoid_upper
   p2 <- ggplot(proj_data, aes(x = Tavoid_upper)) +
@@ -1399,7 +1512,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
                   linewidth = 1, 
                   color = 'darkred') +  
     labs(title = "Distribution of Tavoid_upper", x = "Tavoid_upper (°C)", y = "Frequency") +
-    theme_classic()
+    theme_light()
   
   # p3: Distribution of Tavoid_lower
   p3 <- ggplot(proj_data, aes(x = Tavoid_lower)) +
@@ -1413,7 +1526,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
                   linewidth = 1, 
                   color = 'darkblue') +  
     labs(title = "Distribution of Tavoid_lower", x = "Tavoid_lower (°C)", y = "Frequency") +
-    theme_classic()
+    theme_light()
   
   # p4: Distribution of Distance
   p4 <- ggplot(proj_data, aes(x = distance)) +
@@ -1427,7 +1540,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
                   linewidth = 1, 
                   color = 'darkgreen') +  
     labs(title = "Distribution of Distance", x = "Distance", y = "Frequency") +
-    theme_classic()
+    theme_light()
   
   # p5: Distribution of Shuttles
   p5 <- ggplot(proj_data, aes(x = nr_shuttles)) +
@@ -1441,51 +1554,59 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
                   linewidth = 1, 
                   color = 'purple') +  
     labs(title = "Distribution of Shuttles", x = "Nr shuttles", y = "Frequency") +
-    theme_classic()
+    theme_light()
   
   # p6: Distribution of Time Near Limits
   p6 <- ggplot(proj_data, aes(x = t_near_limits)) +
     geom_histogram(aes(y = after_stat(count)),
-                   binwidth = bin_size_time_near_limits, 
+                   binwidth = bin_size_t_near_limits, 
                    fill = "#EEDD82", 
                    color = "black") +
-    stat_function(fun = function(x) dnorm(x, 
-                                          mean = mean(proj_data$t_near_limits, na.rm = TRUE), 
-                                          sd = sd(proj_data$t_near_limits, na.rm = TRUE)) * length(proj_data$t_near_limits) * bin_size_time_near_limits,
+    stat_function(fun = function(x) dexp(x,
+                                         rate = 1 / mean(proj_data$t_near_limits, na.rm = TRUE)) *
+                    length(proj_data$t_near_limits) * bin_size_t_near_limits,
                   linewidth = 1, 
                   color = 'orange') +  
     labs(title = "Distribution of Time Near Limits", x = "Time Near Extremes", y = "Frequency") +
-    theme_classic()
+    theme_light()
   
   variables <- c("Tpref", "Tavoid_upper", "Tavoid_lower", "distance", "nr_shuttles", "t_near_limits")
 
   # Function to detect outliers based on Z-score for selected variables and return a dataframe with outlier ids
   detect_outliers <- function(data, variables) {
+    variables <- c("Tpref", "Tavoid_upper", "Tavoid_lower", "distance", "nr_shuttles", "t_near_limits")
     outlier_df <- data.frame(matrix(NA, nrow = nrow(data), ncol = length(variables)))  # Initialize dataframe with NA
-    
     # Set column names of the dataframe to the variable names
     colnames(outlier_df) <- variables
     
     # Loop through the specified variables
-    for (i in seq_along(variables)) {
-      var <- variables[i]
+    for (var in variables) {
       
-      # Calculate the Z-scores for the variable
-      z_scores <- (data[[var]] - mean(data[[var]])) / sd(data[[var]])
-      
-      # Identify outliers
-      outlier_indices <- which(abs(z_scores) > nr_sd)
+      if (var == "t_near_limits") {  # Use IQR for t_near_limits
+        Q1 <- quantile(data[[var]], 0.25, na.rm = TRUE)
+        Q3 <- quantile(data[[var]], 0.75, na.rm = TRUE)
+        IQR_value <- Q3 - Q1
+        upper_bound <- Q3 + iqr_multiplier * IQR_value  # Ignore lower bound for exponential data
+        
+        outlier_indices <- which(data[[var]] > upper_bound)
+        
+      } else {
+        # Calculate the Z-scores for the variable
+        z_scores <- (data[[var]] - mean(data[[var]], na.rm = TRUE)) / sd(data[[var]], na.rm = TRUE)
+        # Identify outliers
+        outlier_indices <- which(abs(z_scores) > nr_sd)
+      }
       
       # Place outlier ids in the respective columns, keeping others as NA
       
-      outlier_df[outlier_indices, i] <- data[[id_col]][outlier_indices]
+      outlier_df[outlier_indices, var] <- data[[id_col]][outlier_indices]
       
     }
     
     return(outlier_df)
   }
   
-  outlier_df<-detect_outliers(proj_data, variables)
+  outlier_df<-detect_outliers(glasgow_results, variables)
   
   names_Tpref <- proj_data[!is.na(proj_data$Tpref) & proj_data$fileID %in% outlier_df$Tpref, c("fileID", "Tpref")]
   plot_build <- ggplot_build(p1)
@@ -1557,169 +1678,9 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
 
 
 # Example usage
-outliers<-plot_histograms(glasgow_results, bin_size_distance = 50000, bin_size_shuttles = 500, nr_sd = 1.5)
+# plot_histograms(glasgow_results, bin_size_distance = 50000, bin_size_shuttles = 500, nr_sd = 1.5, iqr_multiplier = 1, id_col = "id")
 
-
-
-
-
-#### COMPILE PROJ_DATA FILE ####
-
-
-
-# TO DO
-# fix Tpref
-# fix fileID
-
-read.shuttlesoft.project <- function (metadata, directory = getwd()){
-  
-  # Check if metadata is specified and give warnings for what happens if data is missing
-  if (missing(metadata)) {
-    warning("Metadata not provided; cannot define one or more of the following variables: 'trial_start', 'a-value', 'b-value', 'initial_temp.'")
-  } else {
-    
-    # If the metadata is present, ensure necessary columns exist in the metadata
-    if (!all(c("file_name", "trial_start", "mass", "a_value", "b_value") %in% colnames(metadata))) {
-      warning("The metadata does not contain one or more necessary columns: 'file_name', 'trial_start', 'mass', 'a_value', 'b_value'.")
-    }
-    
-    # Find rows with NA in specified columns
-    columns_to_check <- intersect(c("file_name", "trial_start", "mass", "a_value", "b_value"), colnames(metadata))
-    rows_with_na <- apply(metadata[columns_to_check], 1, function(row) any(is.na(row)))
-    
-    # If there are any rows with NA, throw warning mentioning file names
-    if (any(rows_with_na)) {
-      names_with_na <- metadata$file_name[rows_with_na]
-      warning (paste("The metadata contains NA values in one or more of these columns: 'file_name', 'trial_start', 'mass', 'a_value', 'b_value'
-",paste(names_with_na, collapse = "\n ")))
-    }
-    
-    #Ensure necessary columns are in the right format
-    if (all(grepl("^\\d{2}:\\d{2}:\\d{2}$", metadata$trial_start))==F){
-      message("Warning: One or more entries in trial_start are not in an hh:mm:ss format")
-    }
-  }
-  
-  # Search for all the .txt files in the specified directory
-  txt_files <- list.files(path = directory, pattern = "\\.txt$", full.names = TRUE)
-  
-  # Check if all files are represented in the metadata
-  file_names <- basename(txt_files)
-  missing_files <- setdiff(file_names, metadata$file_name)
-  if (length(missing_files) > 0) {
-    stop(paste("The following files are not represented in metadata:", 
-               paste(missing_files, collapse = "\n ")))
-  }
-  
-    # Read those text files and compile them into a list
-  data_read <- lapply(txt_files, read.shuttlesoft, metadata = metadata, multidat = T)
-  
-  # Name each list element as the directory of the text files
-  names(data_read)<-txt_files
-  
-  return(data_read)
-}
-
-data_read<-read.shuttlesoft.project(metadata_test)
-
-compile.project.data <- function(data_read,
-                                 calc_distance = F,
-                                 pixel_to_cm = T,
-                                 exclude_acclimation = F,
-                                 exclude_start_minutes = 0, 
-                                 exclude_end_minutes = 0,
-                                 Tpref_method = "median",
-                                 Tavoid_percentiles = c(0.05, 0.95),
-                                 textremes_threshold = expression(0.2 * (max(df$max_T) - max(df$min_T))),
-                                 core_T_variance_type = "std_error"){
-  
-  # Prepare the data using file_prepare. Multidat is TRUE because this will suppress warnings from preparing each data file separately
-  data_list <- lapply(data_read, file_prepare)
-
-  
-  # Create a function that pulls all the information from a datafile in one go, using the functions specified earlier 
-  apply_functions <- function(df, df_name) {
-    
-    # Define the fileID the function is currently considering
-    fileID <- unique(df$fileID)
-    
-    # Calculate core body temperature
-    df<-calc_coreT(df)
-    
-    # Calculate distance covered if true
-    if (calc_distance) df<-calc_distance (df, pixel_to_cm)
-
-    # Exclude acclimation period if requested from the start. Acclimation period is defined in file_prepare
-    if(exclude_acclimation) {
-      df <- subset(df, df$trial_phase != "acclimation") 
-}
-    # Subset custom time window
-    df <- df[df$time_sec >= exclude_start_minutes * 60 & df$time_sec <= max(data$time_sec) - (exclude_end_minutes * 60), ]
-    
-    textremes_th <- eval(textremes_threshold) 
-    
-    # Calculate all variables using default settings (these can be edited in the main function)
-    Tpref <- calc_Tpref(df, method = Tpref_method, print_results = F)
-    grav_time <- calc_gravitation(df, print_results = F)
-    distance <- calc_tot_distance(df, print_results = F)
-    Tavoid <- calc_Tavoid(df, percentiles = Tavoid_percentiles, print_results = F)
-    Tpref_range <- Tavoid[2] - Tavoid[1]
-    textremes <- calc_extremes(df, threshold = textremes_th, print_results = F)
-    textremes_tot <- textremes[1]+textremes[2]
-    core_T_variance <- calc_coreT_variance(df, variance_type = core_T_variance_type)
-    nr_shuttles <- calc_shuttling_frequency(df, print_results = F)
-    chamber_seconds <- calc_occupancy_time(df, print_results = F)
-    
-    # Return a list of the variables you want
-    list(fileID = fileID,
-                Tpref = Tpref,
-                Tpref_range = Tpref_range,
-                grav_time = grav_time, 
-                distance = distance,
-                Tavoid = Tavoid,
-                textremes = textremes,
-                core_T_variance = core_T_variance,
-                nr_shuttles = nr_shuttles,
-                chamber_seconds = chamber_seconds)
-  }
-  
-  # Apply functions to each dataframe in the list and collect results
-  
-  # Apply functions to each dataframe in the list and collect results
-  results <- do.call(rbind, lapply(names(data_list), function(name, total) {
-    # Track progress
-    current_iter <- which(names(data_list) == name)  #CHANGE: Get the current iteration number
-    message("Processing dataset ", current_iter, " of ", total, " (", round((current_iter / total) * 100, 2), "% complete)")  
-    
-    # Apply the functions
-    func_results <- apply_functions(df = data_list[[name]], df_name = name)
-    
-    # Combine results into a data frame
-    data.frame(
-      fileID = func_results$fileID,
-      Tpref = func_results$Tpref,
-      Tpref_range = func_results$Tpref_range,
-      grav_time = func_results$grav_time,
-      distance = func_results$distance,
-      Tavoid_lower = func_results$Tavoid[1],
-      Tavoid_upper = func_results$Tavoid[2],
-      t_near_min = func_results$textremes[1],
-      t_near_max = func_results$textremes[2],
-      t_near_limits = func_results$textremes_tot,
-      core_T_variance = func_results$core_T_variance,
-      nr_shuttles = func_results$nr_shuttles,
-      seconds_in_DECR = func_results$chamber_seconds[1],
-      seconds_in_INCR = func_results$chamber_seconds[2]
-    )
-  }, total = length(data_list)))  #CHANGE: Passed the total number of iterations
-  
-  # Reset rownames as they have acquired names from the list
-  rownames(results) <- NULL
-  
-  return(results)
-}
-
-results<-compile.project.data(data_read, exclude_acclimation = F)
+#### tests ####
 
 calc_Tpref(data, method = "median")
 calc_gravitation(data)
@@ -1731,146 +1692,109 @@ calc_coreT_variance(data)
 calc_shuttling_frequency(data)
 calc_occupancy_time(data)
 
+rm(data, mastersheet_moorea, metadata_moorea, metadata_test)
+#### Glasgow test ####
+library(tidyverse)
 
-write.csv(data, "data.csv")
+file <- "C:/GitHub/ShuttleboxR/Glasgow_2011/Fish_33_20_3.txt"
 
+gg <- read_shuttlesoft(file, metadata_glasgow)
+gg <- file_prepare(gg)
+gg <- calc_coreT(gg)
+gg <- gg%>%
+  mutate(trial_phase = ifelse(dyn_stat == "static", "acclimation", "trial"))
+Tpref_gg <- calc_Tpref(gg, exclude_acclimation = T, print_results = F)
+Tavoid_gg <- calc_Tavoid(gg, exclude_acclimation = T, print_results = F)
+calc_gravitation(gg, exclude_acclimation = T, print_results = F)
 
-#### test ####
+plot_temperature_gradient(gg)
+plot_T_segmented(gg,Tpref_gg, Tavoid_gg[1], Tavoid_gg[2])
+plot_core_T_histogram(gg, exclude_acclimation = T)
+plot_cumulative_distance(gg)
+plot_heatmap(gg, exclude_acclimation = T)
+plot_speed_vs_core_T(gg, exclude_start_minutes = 300)
+plot_speed_histogram(gg, binwidth = 1)
+speed_agg(gg, exclude_start_minutes = 330)
 
+glasgow_read<-read_shuttlesoft_project(metadata_glasgow, "C:/GitHub/ShuttleboxR/Glasgow_2011")
+# pd_glasgow <- compile_project_data(glasgow_read)
+# pd_glasgow<-left_join(pd_glasgow,
+#                      metadata_glasgow%>%
+#                        dplyr::select(file_name, id),
+#                      by = join_by(fileID == file_name))
+# write.csv(pd_glasgow, "C:/GitHub/ShuttleboxR/Glasgow_2011/pd_glasgow.csv")
+pd_glasgow<-read.csv("C:/GitHub/ShuttleboxR/Glasgow_2011/pd_glasgow.csv")
 
+pd_glasgow%>%
+  # filter(!between(max(core_T), 10, 23))%>%
+  ggplot(aes(x=time_h, y = core_T, colour = id))+
+  geom_line()+
+  theme_light()
 
-# glasgow_read<-read.shuttlesoft.project(metadata_glasgow, "C:/GitHub/ShuttleboxR/Glasgow_2011")
+install.packages("ggokabeito")
+library(ggokabeito)
+
+pd_glasgow %>%
+  filter(fileID %in% unique(fileID)[1:9])%>%
+  ggplot(aes(x=time_h, y = core_T, colour = id))+
+  geom_line(linewidth = 1)+
+  theme_light()+
+  scale_color_okabe_ito()+
+  labs(title = "Body Core Temperature vs Time",
+       x = "Time (h)",
+       y = "Body Core Temperature (°C)")
+  
+                       
+  rm(data_list, data_read, glasgow_read, mastersheet_moorea, metadata_test, metadata_moorea, df, moorea_read, moorea_results, pca_results, project_data, qual_col_pals, results, test, test_dat)
+
 # glasgow_results <- compile.project.data(glasgow_read)
-# 
-# glasgow_read_short<-read.shuttlesoft.project(metadata_glasgow, "C:/GitHub/ShuttleboxR/Glasgow_2011/Short")
-# glasgow_results_short <- compile.project.data(glasgow_read_short)
-
-# write.csv(glasgow_results, "C:/GitHub/ShuttleboxR/Glasgow_2011/glasgow_results.csv")
 glasgow_results<-read.csv("C:/GitHub/ShuttleboxR/Glasgow_2011/glasgow_results.csv")
-glasgow_results$t_near_limits <- glasgow_results$t_near_max+glasgow_results$t_near_min
-
+# glasgow_results$t_near_limits <- glasgow_results$t_near_max+glasgow_results$t_near_min
+glasgow_results<-left_join(glasgow_results,
+                     metadata_glasgow%>%
+                       dplyr::select(file_name, id),
+                     by = join_by(fileID == file_name))%>%
+  mutate(t_near_limits = t_near_min + t_near_max)
+  gg_pca<-pca(glasgow_results%>%
+        dplyr::select(-c(core_T_variance, t_near_max, t_near_min, seconds_in_DECR, seconds_in_INCR)),
+      id_col = "id")
+  
+  gg_pca$outliers
+  
+  gg_pca$plots$biplot
 plot_histograms(glasgow_results, bin_size_distance = 50000, bin_size_shuttles = 500)
+#### Moorea test ####
+#Working fish
+file <- "C:/GitHub/ShuttleboxR/Moorea_2024/Sys1_20240620_dflavicaudus_gg.d.03.txt"
 
-pca_and_plot(glasgow_results)
+file <- "C:/GitHub/ShuttleboxR/Moorea_2024/Discards/Sys2_20240609_cunipinna_yr.txt"
+mo <- read_shuttlesoft(file, metdat2)
+mo <- file_prepare(mo)
+mo <- calc_coreT(mo)
+Tpref_mo <- calc_Tpref(mo, exclude_acclimation = T, print_results = F)
+Tavoid_mo <- calc_Tavoid(mo, exclude_acclimation = T, print_results = F)
 
+plot_temperature_gradient(mo)
+plot_T(mo, Tpref_mo, Tavoid_mo[1], Tavoid_mo[2])
+plot_heatmap(mo)
 
-#### PCA tests ####
+moorea_read <- read_shuttlesoft_project(metdat2, "C:/GitHub/ShuttleboxR/Moorea_2024")
+# moorea_results <- compile.project.data(moorea_read)
+# write.csv(moorea_results, "C:/GitHub/ShuttleboxR/Moorea_2024/moorea_results.csv")
+moorea_results <- read.csv("C:/GitHub/ShuttleboxR/Moorea_2024/moorea_results.csv")
+moorea_results<-moorea_results%>%
+  left_join(metdat2%>%
+              dplyr::select(file_name, id),
+            by = join_by(fileID == file_name))
 
-# Identify important variables
-# 
-pca_data_glasgow<-glasgow_results[-1]
-pca_data_glasgow <- pca_data_glasgow[, sapply(pca_data_glasgow, is.numeric)]
+# pd_moorea<-compile_project_data(moorea_read)
+pd_moorea<-left_join(pd_moorea,
+                        metdat2%>%
+                          dplyr::select(file_name, id),
+                        by = join_by(fileID == file_name))
+write.csv(pd_moorea, "C:/GitHub/ShuttleboxR/Moorea_2024/pd_moorea.csv")
 
-# Using FactoMineR
-library(FactoMineR)
-library(factoextra)
-
-pca <- PCA(pca_data_glasgow, scale.unit = TRUE, graph = FALSE)
-summary(pca)
-
-fviz_screeplot(pca, addlabels = TRUE, main = "Scree Plot")
-loadings_fm <- pca$var$coord
-loadings_fm
-fviz_pca_biplot(pca, 
-                repel = TRUE,  # Avoid overlapping labels
-                col.var = "blue", # Color for variables
-                col.ind = "red",  # Color for individuals
-                title = "PCA Biplot (FactoMineR)")
-pca$var$contrib
-fviz_pca_var(pca, col.var = "contrib", gradient.cols = c("blue", "yellow", "red"))
-fviz_contrib(pca, choice = "var", axes = 1:4)
-
-short_data <- pca_data_glasgow[,c("Tavoid_lower", "Tavoid_upper", "seconds_in_INCR", "t_near_limits", "Tpref", "Tpref_range", "distance")]
-pca_short <- PCA(short_data, scale.unit = TRUE, graph = FALSE)
-fviz_screeplot(pca_short, addlabels = TRUE, main = "Scree Plot")
-fviz_pca_biplot(pca_short, 
-                repel = TRUE,  # Avoid overlapping labels
-                col.var = "blue", # Color for variables
-                col.ind = "red",  # Color for individuals
-                title = "PCA Biplot (FactoMineR)")
-
-fviz_contrib(pca_short, choice = "var", axes = 1:5)
-fviz_pca_var(pca, col.var = "contrib", gradient.cols = c("blue", "yellow", "red"))
-summary(pca_short)
-
-
-pc1_scores <- pca_base$x[, 1]  
-variable<-glasgow_results$Tpref_range
-
-plot(variable, pc1_scores, 
-     xlab = "Variable", ylab = "PC1 Scores",
-     pch = 16, col = "blue")
-model <- lm(pc1_scores ~ variable)
-abline(model, col = "red", lwd = 2)
-summary(model)$r.squared
-
-#### PCA outlier methods ####
-library(dbscan)
-library(gridExtra)
-library(FactoMineR)
-library(factoextra)
-
-pca <- function(data, mahalanobis_th = 0.7, dbscan_th = 1, print_labels = TRUE, id_col = "fileID", var_col = "Tpref") {
-  
-  # Change the id column into row names 
-  # Remove all non-numeric columns and perform a PCA
-  rownames(data) <- data[[id_col]]
-  pca_data <- data[, sapply(data, is.numeric)]
-  
-  pca <- PCA(pca_data, scale.unit = TRUE, graph = FALSE)
-  pca_scores <- pca$ind$coord
-  
-  # Compute the Mahalanobis distance
-  center <- colMeans(pca_scores)  # Mean of the PCA scores
-  cov_matrix <- cov(pca_scores)  # Covariance matrix of PCA scores
-  mahalanobis_dist <- mahalanobis(pca_scores, center, cov_matrix)
-  mahalanobis_dist_df<-as.data.frame(mahalanobis_dist)
-  
-  threshold <- qchisq(mahalanobis_th, df = ncol(pca_scores))  # Chi-squared threshold
-  outliers_mahalanobis <- rownames(mahalanobis_dist_df)[mahalanobis_dist_df$mahalanobis_dist > threshold]
-  
-  dbscan_result <- dbscan::dbscan(pca_scores[, 1:2], eps = dbscan_th, minPts = 5)  # Using PC1 and PC2 for DBSCAN
-  outliers_dbscan <- rownames(data)[dbscan_result$cluster == 0]  # Points with cluster = 0 are outliers
-  
-  combined_outliers <- matrix(NA, nrow = 2, ncol = max(length(outliers_mahalanobis), length(outliers_dbscan)))
-  combined_outliers[1, 1:length(outliers_mahalanobis)] <- outliers_mahalanobis
-  combined_outliers[2, 1:length(outliers_dbscan)] <- outliers_dbscan
-  combined_outliers <- as.data.frame(combined_outliers)
-  rownames(combined_outliers) <- c("Mahalanobis Outliers", "DBSCAN Outliers")
-
-  p1 <- fviz_screeplot(pca, addlabels = TRUE, main = "Scree Plot")
-  p2 <- fviz_pca_biplot(pca,
-                  repel = TRUE,  # Avoid overlapping labels
-                  col.var = "blue", # Color for variables
-                  col.ind = "red",  # Color for individuals
-                  title = "PCA Biplot")
-
-  p3 <- fviz_contrib(pca, choice = "var", axes = 1)+
-    ggtitle("Contribution of variables to PC1")
-
-  plot_dat <- data.frame(id = data[[id_col]], PC1 = pca$ind$coord[, 1], var_y = data[[var_col]])
-  names(plot_dat)[names(plot_dat) == "var_y"]<-var_col
-  plot_dat[!is.na(plot_dat$id), ]
-
-  p4 <- ggplot(plot_dat, aes(x = PC1, y = Tpref)) +
-    geom_point(color = "#F79518") +
-    geom_smooth(method = "lm", color = "black") +  # Adding 95% CI shading
-    geom_text(aes(label = id), vjust = -1, hjust = 1.5) +
-    labs(title = paste0("PCA Scores from the First Component vs ",var_col," with 95% CI"),
-         x = "PCA First Component Score",
-         y = paste0(var_col)) +
-    theme_classic()
-  
-  output<-list(pca, combined_outliers, p1, p2, p3, p4)
-  names(output) <- c("pca", "outliers", "p1", "p2", "p3", "p4")
-  
-  return(output)
-  
-}
- 
-pca <- detect_outliers_pca(proj_data, id_col = "id")
-
-pca$p2
-pca$outliers
-
-
+pd_moorea%>%
+ggplot(aes(x=time_h, y = core_T, colour = id))+
+  geom_line()+
+  theme_light()
