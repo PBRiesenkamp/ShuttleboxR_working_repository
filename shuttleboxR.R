@@ -25,47 +25,6 @@ renv::restore()
 
 # Confirm that R is looking in the right place
 getwd()
-#### test data ####
-metadata_test<-read.csv("additional_data.csv", na.strings = c("NaN", ""))
-
-
-#### Moorea data ####
-
-#Working fish
-file <- "C:/GitHub/ShuttleboxR/Moorea_2024/Sys1_20240620_dflavicaudus_gg.d.03.txt"
-
-
-# Metadata
-library(tidyverse)
-metadata_moorea <- read.csv("C:/GitHub/ShuttleboxR/Moorea_2024/shuttlebox_moorea_2024.csv")%>%
-  rename(file_name = log_name,
-         initial_T = holding_tank_temperature)%>%
-  mutate(file_name = paste0(file_name, ".txt"),
-         trial_start = ifelse(!is.na(trial_start), paste0(trial_start, ":00"), NA))
-mastersheet_moorea <- read.csv("C:/GitHub/ShuttleboxR/Moorea_2024/mastersheet_moorea_2024.csv")%>%
-  dplyr::select(Tag, Total_length, Weight_g)%>%
-  mutate(Tag = tolower(Tag))
-
-metdat2 <- left_join(metadata_moorea,
-                     mastersheet_moorea,
-                     by = join_by(id == Tag))%>%
-  rename(mass = Weight_g)%>%
-  mutate(a_value = 3.69,
-         b_value = -0.574,
-         mass = ifelse(is.na(mass), 1, mass))
-
-##### Glasgow data ####
-# proj_data <- read.csv("project_database.csv") # This should be a summary data file with data from numerous fish (e.g. all fish in a study)
-file <- "C:/GitHub/ShuttleboxR/Glasgow_2011/Fish_1_13_3.txt"
-
-metadata_glasgow<-read.delim("C:/GitHub/ShuttleboxR/Glasgow_2011/metadata/Fish_meta_data1.1.txt")%>%
-  rename(file_name = Fish_ID,
-         initial_temp = Accl_Temp,
-         mass = BM)%>%
-  mutate(file_name = paste0(file_name, ".txt"),
-         a_value = 3.69,
-         b_value = 0.574,
-         id = str_extract(file_name, "(?<=Fish_)\\d+"))
 
 ##### (PREPARE) Read shuttlesoft files function ####
 
@@ -153,6 +112,8 @@ read_shuttlesoft <- function (file, metadata, multidat = F){
     data$trial_start <- suppressWarnings(trialstart (metadata = metadata))} else {
       data$trial_start <- trialstart(metadata = metadata)}
  
+  data$trial_start <- as.character(data$trial_start)
+  
   data$a_value <- NA
   data$b_value <- NA
   data$mass <- NA
@@ -162,19 +123,9 @@ read_shuttlesoft <- function (file, metadata, multidat = F){
   data$mass <- metadata$mass[metadata$file_name == fileID]
   data$initial_T <- metadata$initial_T[metadata$file_name == fileID] 
   
-  # # Remove unnecessary columns
-  # data = subset(data, select = -c(k, Tpref_loligo, avoidance_upper, avoidance_upper_core, avoidance_lower, avoidance_lower_core))
-  
-  # # Reorder columns
-  # col_order <- c("date", "time", "zone", "INCR_T", "DECR_T", "core_T",  "x_pos", "y_pos", "velocity", "distance",
-  #                "time_in_INCR", "time_in_DECR", "max_T", "min_T", "change_rate", "delta_T", "dyn_hysteresis", "stat_T_INCR", "stat_hyst_INCR", "stat_T_DECR",
-  #                "stat_hyst_DECR", "trial_start", "a_value", "b_value", "mass", "initial_T", "pixel_ratio", "notes")
-  # data <- data[, col_order]
-  
-  return(data)
+   return(data)
 }
 
-data <- read_shuttlesoft(file, metadata_glasgow)
 
 ##### (PREPARE) inspect data function ####
 inspect <- function(data){
@@ -195,8 +146,6 @@ inspect <- function(data){
   
   
 }
-
-inspect(data)
 
 ##### (PREPARE) prepare data file for further processing and detect shuttles ####
 
@@ -267,8 +216,6 @@ file_prepare <- function(data) {
   return(data)
 }
 
-data <- file_prepare(data)
-
 ##### (CALCULATE) coreT if not already done in Shuttlesoft ####
 
 calc_coreT <- function(data) {
@@ -316,8 +263,6 @@ calc_coreT <- function(data) {
   return(data)
 }
 
-data <- calc_coreT(data)
-
 ##### (CALCULATE) Temperature preference (using mean or median of coreT values) ####
 
 calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
@@ -354,10 +299,6 @@ calc_Tpref <- function(data, method = c("mean", "median", "mode"), exclude_start
 
 }
 
-# Example usage
-
-Tpref <- calc_Tpref(data, method = "median", exclude_start_minutes = 0, exclude_end_minutes = 0)
-
 ##### (CALCULATE) Avoidance temperature (upper and lower) ####
 
 calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
@@ -387,10 +328,7 @@ calc_Tavoid <- function(data, percentiles = c(0.05, 0.95), exclude_start_minutes
 
 }
 
-# Example usage
-Tavoid_values <-calc_Tavoid(data, percentiles = c(0.05, 0.95), exclude_start_minutes = 0, exclude_end_minutes = 0, print_results = F)
-
-##### (CALCULATE) Total distance moved ####
+##### (CALCULATE) Distance moved ####
 
 calc_distance <- function(data, pixel_to_cm = T){
   
@@ -428,8 +366,6 @@ calc_distance <- function(data, pixel_to_cm = T){
 
 }
 
-# data<-calc_distance(data)
-
 calc_tot_distance <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
   # Ensure the Distance moved column exists
   if (!"distance" %in% colnames(data)) {
@@ -461,12 +397,9 @@ calc_tot_distance <- function(data, exclude_start_minutes = 0, exclude_end_minut
   return(total_distance)
 }
 
-# Example usage
-dist <- calc_tot_distance(data)
-
 ##### (CALCULATE) Shuttling frequency ####
 
-calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
+calc_shuttles <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
   # Ensure the 'shuttle' and 'time_sec' columns exist
   if (!all(c("shuttle", "time_sec") %in% colnames(data))) {
     stop("The dataset does not contain 'shuttle' and/or 'time_sec' columns. Run file_prepare on your data.")
@@ -495,12 +428,9 @@ calc_shuttling_frequency <- function(data, exclude_start_minutes = 0, exclude_en
   return(shuttles)
 }
 
-# Example usage
-shut_freq <- calc_shuttling_frequency(data)
-
 ##### (CALCULATE) Occupancy time in each chamber ####
 
-calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
+calc_occupancy <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F, print_results = T) {
   # Ensure the 'zone' and 'time_sec' columns exist
   if (!all(c("zone", "time_sec") %in% colnames(data))) {
     stop("The dataset does not contain 'zone' and/or 'time_sec' columns.")
@@ -530,9 +460,6 @@ calc_occupancy_time <- function(data, exclude_start_minutes = 0, exclude_end_min
   
   return(c(time_in_chamberDECR, time_in_chamberINCR))
 }
-
-# Example usage
-occ_time <- calc_occupancy_time(data)
 
 ##### (CALCULATE) Core temperature variance  #####
 
@@ -570,39 +497,6 @@ calc_coreT_variance <- function(data, variance_type = c("std_error", "std_deviat
   return(variance)
 }
 
-# # Example usage
-# variance_se <- calc_coreT_variance(data, variance_type = "std_error", 240, 5)
-# variance_sd <- calc_coreT_variance(data, variance_type = "std_deviation", 240, 5)
-# variance_cv <- calc_coreT_variance(data, variance_type = "coeff_variation", 240, 5)
-# 
-# print(paste("Standard Error:", variance_se))
-# print(paste("Standard Deviation:", variance_sd))
-# print(paste("Coefficient of Variation:", variance_cv))
-
-##### (CALCULATE) Minimum gravitation time ####
-
-calc_min_gravitation <- function(start_T, target_T, rate_of_change, print_results = T) {
-  # Calculate the change in temperature
-  delta_T <- target_T - start_T
-  
-  # Calculate the minimum gravitation time
-  gravitation_time <- delta_T / (rate_of_change/60)
-  
-  if (print_results) {
-  # Print the result
-  print(paste("Minimum Gravitation Time:", gravitation_time, "minutes"))
-  }
-  
-  return(gravitation_time)
-}
-
-# # Example usage
-# start_T <- 27  # Starting mean temperature in °C
-# target_T <- 35  # Target temperature in °C, e.g. approximation of anticipated Tpref
-# rate_of_change <- 5  # Rate of temperature change in °C/h
-# 
-# min_grav_time <- calc_min_gravitation(start_T, target_T, rate_of_change)
-
 ##### (CALCULATE) Actual Gravitation time  ####
 
 library(segmented)
@@ -623,7 +517,7 @@ library(segmented)
   
   # Perform segmented regression
   fit <- lm(core_T ~ time_h, data = data)
-  seg_fit <- segmented(fit, seg.Z = ~time_h, npsi = 1)
+  seg_fit <- segmented::segmented(fit, seg.Z = ~time_h, npsi = 1)
   
   # Get summary and breakpoint
   seg_summary <- summary(seg_fit)
@@ -645,9 +539,6 @@ library(segmented)
   
   return(gravitation_time)
 }
-
-# Calculate gravitation time
-act_grav_time <- calc_gravitation(data)
 
 ##### (CALCULATE) Time at extreme temperatures (near set limits) ####
 
@@ -694,9 +585,6 @@ calc_extremes <- function(data, threshold = 0.2*(max(data$max_T)-max(data$min_T)
   return(c(time_near_lower_extreme, time_near_upper_extreme))
 }
 
-# # # Example usage
-extreme_time_percent <- calc_extremes(data)
-
 ####### (INSPECT) Temperatures in each side of the shuttlebox over time ####
 
 library(ggplot2)
@@ -726,10 +614,6 @@ plot_T_gradient <- function(data, exclude_start_minutes = 0, exclude_end_minutes
   
   print(plot)
 }
-
-# Example usage
-# Assuming 'data' contains temperature columns for both chambers
-plot_T_gradient(data, 0, 0)
 
 ####### (INSPECT) Core body temperature over time #####
 
@@ -764,15 +648,12 @@ plot_T <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_start_minute
   print(plot)
 }
 
-# Example usage
-# plot_T(data, Tpref, Tavoid_values[1], Tavoid_values[2])
-
 ####### (INSPECT) Segmented regressions of core body temperature during trial #####
 
 library(ggplot2)
 library(segmented)
 
-plot_T_segmented <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_start_minutes = 0, exclude_end_minutes = 0) {
+plot_T_segmented <- function(data, Tpref_method = "median", Tavoid_percentiles = c(0.05, 0.95),exclude_start_minutes = 0, exclude_end_minutes = 0, exclude_acclimation = F) {
   # Ensure necessary columns exist
   if (!all(c("time_h", "core_T") %in% colnames(data))) {
     stop("The dataset does not contain one or more necessary columns: 'time_h', 'core_T'.")
@@ -786,9 +667,27 @@ plot_T_segmented <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_st
   end_time <- max(data$time_sec) - (exclude_end_minutes * 60)
   data <- data[data$time_sec >= start_time & data$time_sec <= end_time, ]
   
-  # Perform segmented regression
-  fit <- lm(core_T ~ time_h, data = data)
+  if (exclude_acclimation) {
+  fit <- lm(core_T ~ time_h, data = data[data$trial_phase != "acclimation", ])
   seg_fit <- segmented(fit, seg.Z = ~time_h, npsi = 1)
+  predicted_values <- data.frame(
+    time_h = data$time_h[data$trial_phase != "acclimation"],
+    predicted = predict(seg_fit))
+  } else {
+    fit <- lm(core_T ~ time_h, data = data)
+    seg_fit <- segmented(fit, seg.Z = ~time_h, npsi = 1)
+    predicted_values <- data.frame(
+      time_h = data$time_h,
+      predicted = predict(seg_fit))
+  }
+  
+  # Perform segmented regression
+  
+  
+  Tpref <- calc_Tpref(data, method = Tpref_method, print_results = F, exclude_start_minutes = exclude_start_minutes, exclude_end_minutes = exclude_end_minutes,  exclude_acclimation = exclude_acclimation)
+  Tavoid <- calc_Tavoid(data, percentiles = Tavoid_percentiles, print_results = F, exclude_start_minutes = exclude_start_minutes, exclude_end_minutes = exclude_end_minutes,  exclude_acclimation = exclude_acclimation)
+  Tavoid_lower <- Tavoid[1]
+  Tavoid_upper <- Tavoid[2]
   
   # Get summary and breakpoint
   seg_summary <- summary(seg_fit)
@@ -796,8 +695,9 @@ plot_T_segmented <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_st
   
   # Plot data with segmented regression
   plot <- ggplot(data, aes(x = time_h, y = core_T)) +
-    geom_point(alpha = 0.5, size = 0.4) +
-    geom_line(aes(y = predict(seg_fit)), color = "#F79518", size = 1) +
+    geom_point(alpha = 1, size = 0.4) +
+    geom_line(data = predicted_values, aes(x = time_h, y = predicted), color = "#F79518", size = 1)+
+    annotate("text", x = min(predicted_values$time_h), hjust = 0, y = min(data$core_T), label = paste("Gravitation time:", round(breakpoints, 1), "h"), color = "#F79518", size = 4.5)+
     geom_hline(yintercept = Tpref, linetype = "dashed", color = "#9EF1A4", size = 1.75) +
     annotate("text", x = min(data$time_h), hjust = 0, y = Tpref + 0.5, label = paste("Tpref:", round(Tpref, 1)), color = "#9EF1A4", size = 4.5)+
     geom_hline(yintercept = Tavoid_lower, linetype = "dashed", color = "#9ECFF1", size = 1.75) +
@@ -807,17 +707,13 @@ plot_T_segmented <- function(data, Tpref, Tavoid_lower, Tavoid_upper, exclude_st
     labs(title = "Body Core Temperature vs Time with Segmented Regression",
          x = "Time (h)",
          y = "Body Core Temperature (°C)") +
-    theme_light()
+    theme_minimal()
   
   print(plot)
   
   return(list(summary = seg_summary, breakpoints = breakpoints))
   
 }
-
-# Example usage
-# plot_T_segmented(data, Tpref = Tpref, Tavoid_values[1], Tavoid_values[2])
-
 
 ####### (INSPECT) Histogram of time spent at different core body temperatures ####
 
@@ -870,8 +766,6 @@ plot_coreT_histogram <- function(data, bin_size = 0.1, exclude_start_minutes = 0
   # return(Tpref_peak)
 }
 
-# # Example usage
-# plot_coreT_histogram(data, bin_size = 0.1, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
 ####### (INSPECT) Histogram of selected variable ####
 
@@ -901,9 +795,6 @@ plot_histogram <- function(data, column, binwidth = 0.1, exclude_start_minutes =
   
   print(plot)
 }
-
-# Example usage
-# plot_histogram(data, "core_T", binwidth = 0.1, exclude_start_minutes = 240, exclude_end_minutes = 5)
 
 ####### (INSPECT) Cumulative distance changes over time ####
 
@@ -935,9 +826,6 @@ plot_histogram <- function(data, column, binwidth = 0.1, exclude_start_minutes =
     
     print(plot)
   }
-
-# Example usage
-# plot_distance(data)
 
 ####### (INSPECT) Movement speed vs body core temperature ####
 
@@ -973,12 +861,7 @@ plot_speed_coreT <- function(data, exclude_start_minutes = 0, exclude_end_minute
   return(plot)
 }
 
-# Example usage
-# plot_speed_coreT(data, exclude_start_minutes = 240)
-
 ####### (INSPECT) Interval plot of selected variable #####
-
-variable = 'shuttle'
 
 plot_interval <- function(data, column, interval_minutes = 10, exclude_start_minutes = 0, exclude_end_minutes = 0) {
 
@@ -1018,9 +901,6 @@ plot_interval <- function(data, column, interval_minutes = 10, exclude_start_min
   return(rate)
 }
 
-# Example usage
-# plot_interval(data, column = "shuttle", interval_minutes = 60)
-
 ####### (INSPECT) Produce a correlation matrix ####
 
 library(ggplot2)
@@ -1057,8 +937,6 @@ correlation_matrix <- function(data, columns, exclude_start_minutes = 0, exclude
       upper.panel = panel.cor  # Correlation values
     )
   }
-
-# correlation_matrix(data = data, columns = c("velocity", "core_T", "shuttle"))
 
 ####### (INSPECT) 3D animation of fish movements at selected time intervals, with time as a dimension ####
 
@@ -1111,10 +989,6 @@ animate_movements <- function(data, exclude_start_minutes = 0, exclude_end_minut
   }, duration = nrow(data) / (run_speed * 10))
 }
 
-
-# Example usage
-# animate_movements(data, exclude_end_minutes = 5, speed = 1000)
-
 ####### (INSPECT) Heat map of fish locations over the trial ####
 
 library(ggplot2)
@@ -1149,10 +1023,6 @@ plot_heatmap <- function(data, exclude_start_minutes = 0, exclude_end_minutes = 
   
   return(heatmap_plot)
 }
-
-# # Example usage
-# heatmap_plot <- plot_heatmap(data)
-# print(heatmap_plot)
 
 ####### (PREPARE) Read shuttlesoft project from directory ####
 
@@ -1265,7 +1135,7 @@ calc_project_results <- function(data_read,
     textremes_tot <- textremes[1]+textremes[2]
     core_T_variance <- calc_coreT_variance(df, variance_type = core_T_variance_type)
     nr_shuttles <- calc_shuttling_frequency(df, print_results = F)
-    chamber_seconds <- calc_occupancy_time(df, print_results = F)
+    chamber_seconds <- calc_occupancy(df, print_results = F)
     
     # Return a list of the variables you want
     return(list(fileID = fileID,
@@ -1317,14 +1187,11 @@ calc_project_results <- function(data_read,
   return(c(results))
 }
 
-
-praise()
-
 ####### (INSPECT) Link shuttling and activity across individuals in the entire project dataset ####
 
 library(ggplot2)
 
-plot_distance_vs_shuttles() <- function(proj_data) {
+plot_distance_vs_shuttles <- function(proj_data) {
   # Ensure necessary columns exist
   if (!all(c("fileID", "distance", "nr_shuttles") %in% colnames(proj_data))) {
     stop("The dataset does not contain one or more necessary columns: 'fileID', 'distance', 'nr_shuttles'.")
@@ -1342,14 +1209,11 @@ plot_distance_vs_shuttles() <- function(proj_data) {
   print(plot)
 }
 
-# Example usage
-plot_activity(glasgow_results)
-
 ####### (INSPECT) Link time near system temperature limits and activity across individuals in the entire project dataset ####
 
 library(ggplot2)
 
-plot_limits_vs_distance() <- function(proj_data) {
+plot_limits_vs_distance <- function(proj_data) {
   # Ensure necessary columns exist
   if (!all(c("fileID", "distance", "t_near_limits") %in% colnames(proj_data))) {
     stop("The dataset does not contain one or more necessary columns: 'fileID', 'distance', 't_near_limits'.")
@@ -1366,10 +1230,6 @@ plot_limits_vs_distance() <- function(proj_data) {
   
   print(plot)
 }
-
-# Example usage
-plot_limits(glasgow_results)
-
 
 ####### (INSPECT) Link time near system temperature limits and shuttles across individuals in the entire project dataset ####
 
@@ -1393,16 +1253,12 @@ plot_limits_vs_shuttles <- function(proj_data, id_col) {
   print(plot)
 }
 
-# Example usage
-plot_limits_vs_shuttles(glasgow_results)
-
 ####### (INSPECT) PCA with shuttles, distance moved, and time near limits, then plot PC scores vs Tpref ####
 
 library(FactoMineR)
 library(factoextra)
 library(ggplot2)
 library(dbscan)
-
 
 pca <- function(data, mahalanobis_th = 0.7, dbscan_th = 1, print_labels = TRUE, id_col = "fileID", var_col = "Tpref") {
   
@@ -1447,13 +1303,15 @@ pca <- function(data, mahalanobis_th = 0.7, dbscan_th = 1, print_labels = TRUE, 
     ggtitle("Contribution of variables to PC1")
   
   plot_dat <- data.frame(id = data[[id_col]], PC1 = pca$ind$coord[, 1], var_y = data[[var_col]])
-  names(plot_dat)[names(plot_dat) == "var_y"]<-var_col
+  if(print_labels == F){
+    plot_dat$id <- ""
+  }
   plot_dat[!is.na(plot_dat$id), ]
   
-  p4 <- ggplot(plot_dat, aes(x = PC1, y = Tpref)) +
+  p4 <- ggplot(plot_dat, aes(x = PC1, y = var_y)) +
     geom_point(color = "#F79518") +
     geom_smooth(method = "lm", color = "black") +  # Adding 95% CI shading
-    geom_text(aes(label = ifelse(print_labels, id, "")), vjust = -1, hjust = 1.5) +
+    geom_text(aes(label = id), vjust = -1, hjust = 1.5) +
     labs(title = paste0("PCA Scores from the First Component vs ",var_col," with 95% CI"),
          x = "PCA First Component Score",
          y = paste0(var_col)) +
@@ -1471,7 +1329,6 @@ pca <- function(data, mahalanobis_th = 0.7, dbscan_th = 1, print_labels = TRUE, 
   
 }
 
-# loadings
 ####### (INSPECT) Frequency distributions for key measures across individuals in the data set ####
 
 library(ggplot2)
@@ -1495,8 +1352,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
                                           sd = sd(proj_data$Tpref, na.rm = TRUE)) * length(proj_data$Tpref) * bin_size_Tpref,
                   linewidth = 1, 
                   color = 'darkorange2') +
-    labs(title = "Distribution of Tpref", 
-         x = "Tpref (°C)", 
+    labs(x = "Temperature preference (°C)", 
          y = "Frequency") +
     theme_light()
   
@@ -1511,7 +1367,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
                                           sd = sd(proj_data$Tavoid_upper, na.rm = TRUE)) * length(proj_data$Tavoid_upper) * bin_size_Tavoid_upper,
                   linewidth = 1, 
                   color = 'darkred') +  
-    labs(title = "Distribution of Tavoid_upper", x = "Tavoid_upper (°C)", y = "Frequency") +
+    labs(x = "Upper avoidance temperature (°C)", y = "Frequency") +
     theme_light()
   
   # p3: Distribution of Tavoid_lower
@@ -1525,7 +1381,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
                                           sd = sd(proj_data$Tavoid_lower, na.rm = TRUE)) * length(proj_data$Tavoid_lower) * bin_size_Tavoid_lower,
                   linewidth = 1, 
                   color = 'darkblue') +  
-    labs(title = "Distribution of Tavoid_lower", x = "Tavoid_lower (°C)", y = "Frequency") +
+    labs(x = "Lower avoidance temperature (°C)", y = "Frequency") +
     theme_light()
   
   # p4: Distribution of Distance
@@ -1539,7 +1395,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
                                           sd = sd(proj_data$distance, na.rm = TRUE)) * length(proj_data$distance) * bin_size_distance,
                   linewidth = 1, 
                   color = 'darkgreen') +  
-    labs(title = "Distribution of Distance", x = "Distance", y = "Frequency") +
+    labs(x = "Distance", y = "Frequency") +
     theme_light()
   
   # p5: Distribution of Shuttles
@@ -1553,7 +1409,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
                                           sd = sd(proj_data$nr_shuttles, na.rm = TRUE)) * length(proj_data$nr_shuttles) * bin_size_shuttles,
                   linewidth = 1, 
                   color = 'purple') +  
-    labs(title = "Distribution of Shuttles", x = "Nr shuttles", y = "Frequency") +
+    labs(x = "Nr shuttles", y = "Frequency") +
     theme_light()
   
   # p6: Distribution of Time Near Limits
@@ -1567,7 +1423,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
                     length(proj_data$t_near_limits) * bin_size_t_near_limits,
                   linewidth = 1, 
                   color = 'orange') +  
-    labs(title = "Distribution of Time Near Limits", x = "Time Near Extremes", y = "Frequency") +
+    labs(x = "Time near limits", y = "Frequency") +
     theme_light()
   
   variables <- c("Tpref", "Tavoid_upper", "Tavoid_lower", "distance", "nr_shuttles", "t_near_limits")
@@ -1598,17 +1454,16 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
       }
       
       # Place outlier ids in the respective columns, keeping others as NA
-      
       outlier_df[outlier_indices, var] <- data[[id_col]][outlier_indices]
       
     }
     
     return(outlier_df)
   }
+  outlier_df<-detect_outliers(proj_data, variables)
   
-  outlier_df<-detect_outliers(glasgow_results, variables)
-  
-  names_Tpref <- proj_data[!is.na(proj_data$Tpref) & proj_data$fileID %in% outlier_df$Tpref, c("fileID", "Tpref")]
+  names_Tpref <- proj_data[!is.na(proj_data$Tpref) & proj_data[[id_col]] %in% outlier_df$Tpref, c(id_col, "Tpref")]
+  colnames(names_Tpref) <- c("id","Tpref")
   plot_build <- ggplot_build(p1)
   y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
   y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
@@ -1616,10 +1471,10 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
   
   p1 <- p1 + 
     geom_vline(data = names_Tpref, aes(xintercept = Tpref), color = "blue", linetype = "dashed") +
-    geom_text(data = names_Tpref, aes(x = Tpref, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
+    geom_text(data = names_Tpref, aes(x = Tpref, y = y_mid, label = id), angle = 90, vjust = -1, color = "blue", position = position_jitter(width = 0, height = 3))
   
-  
-  names_Tavoid_upper <- proj_data[!is.na(proj_data$Tavoid_upper) & proj_data$fileID %in% outlier_df$Tavoid_upper, c("fileID", "Tavoid_upper")]
+  names_Tavoid_upper <- proj_data[!is.na(proj_data$Tavoid_upper) & proj_data[[id_col]] %in% outlier_df$Tavoid_upper, c(id_col, "Tavoid_upper")]
+  colnames(names_Tavoid_upper) <- c("id","Tavoid_upper")
   plot_build <- ggplot_build(p2)
   y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
   y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
@@ -1627,9 +1482,10 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
   
   p2 <- p2 + 
     geom_vline(data = names_Tavoid_upper, aes(xintercept = Tavoid_upper), color = "blue", linetype = "dashed") +
-    geom_text(data = names_Tavoid_upper, aes(x = Tavoid_upper, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
+    geom_text(data = names_Tavoid_upper, aes(x = Tavoid_upper, y = y_mid, label = id), angle = 90, vjust = -1, color = "blue", position = position_jitter(width = 0, height = 3))
   
-  names_Tavoid_lower <- proj_data[!is.na(proj_data$Tavoid_lower) & proj_data$fileID %in% outlier_df$Tavoid_lower, c("fileID", "Tavoid_lower")]
+  names_Tavoid_lower <- distinct(proj_data[!is.na(proj_data$Tavoid_lower) & proj_data[[id_col]] %in% outlier_df$Tavoid_lower, c(id_col, "Tavoid_lower")])
+  colnames(names_Tavoid_lower) <- c("id","Tavoid_lower")
   plot_build <- ggplot_build(p2)
   y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
   y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
@@ -1637,9 +1493,10 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
   
   p3 <- p3 + 
     geom_vline(data = names_Tavoid_lower, aes(xintercept = Tavoid_lower), color = "blue", linetype = "dashed") +
-    geom_text(data = names_Tavoid_lower, aes(x = Tavoid_lower, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
+    geom_text(data = names_Tavoid_lower, aes(x = Tavoid_lower, y = y_mid, label = id), angle = 90, vjust = -1, color = "blue", position = position_jitter(width = 0, height = 3))
   
-  names_distance <- proj_data[!is.na(proj_data$distance) & proj_data$fileID %in% outlier_df$distance, c("fileID", "distance")]
+  names_distance <- proj_data[!is.na(proj_data$distance) & proj_data[[id_col]] %in% outlier_df$distance, c(id_col, "distance")]
+  colnames(names_distance) <- c("id","distance")
   plot_build <- ggplot_build(p2)
   y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
   y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
@@ -1647,9 +1504,10 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
   
   p4 <- p4 + 
     geom_vline(data = names_distance, aes(xintercept = distance), color = "blue", linetype = "dashed") +
-    geom_text(data = names_distance, aes(x = distance, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
+    geom_text(data = names_distance, aes(x = distance, y = y_mid, label = id), angle = 90, vjust = -1, color = "blue", position = position_jitter(width = 0, height = 3))
  
-  names_nr_shuttles <- proj_data[!is.na(proj_data$nr_shuttles) & proj_data$fileID %in% outlier_df$nr_shuttles, c("fileID", "nr_shuttles")]
+  names_nr_shuttles <- proj_data[!is.na(proj_data$nr_shuttles) & proj_data[[id_col]] %in% outlier_df$nr_shuttles, c(id_col, "nr_shuttles")]
+  colnames(names_nr_shuttles) <- c("id","nr_shuttles")
   plot_build <- ggplot_build(p2)
   y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
   y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
@@ -1657,9 +1515,10 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
   
   p5 <- p5 + 
     geom_vline(data = names_nr_shuttles, aes(xintercept = nr_shuttles), color = "blue", linetype = "dashed") +
-    geom_text(data = names_nr_shuttles, aes(x = nr_shuttles, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
+    geom_text(data = names_nr_shuttles, aes(x = nr_shuttles, y = y_mid, label = id), angle = 90, vjust = -1, color = "blue", position = position_jitter(width = 0, height = 3))
   
-  names_t_near_limits <- proj_data[!is.na(proj_data$t_near_limits) & proj_data$fileID %in% outlier_df$t_near_limits, c("fileID", "t_near_limits")]
+  names_t_near_limits <- proj_data[!is.na(proj_data$t_near_limits) & proj_data[[id_col]] %in% outlier_df$t_near_limits, c(id_col, "t_near_limits")]
+  colnames(names_t_near_limits) <- c("id","t_near_limits")
   plot_build <- ggplot_build(p2)
   y_min <- plot_build$layout$panel_params[[1]]$y.range[1]
   y_max <- plot_build$layout$panel_params[[1]]$y.range[2]
@@ -1667,7 +1526,7 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
   
   p6 <- p6 + 
     geom_vline(data = names_t_near_limits, aes(xintercept = t_near_limits), color = "blue", linetype = "dashed") +
-    geom_text(data = names_t_near_limits, aes(x = t_near_limits, y = y_mid, label = fileID), angle = 90, vjust = -1, color = "blue")
+    geom_text(data = names_t_near_limits, aes(x = t_near_limits, y = y_mid, label = id), angle = 90, vjust = -1, color = "blue", position = position_jitter(width = 0, height = 3))
   
   # Combine the plots into a multipanel plot
   multipanel_plot <- grid.arrange(p1, p2, p3, p4, p5, p6, ncol = 2)
@@ -1677,63 +1536,48 @@ plot_histograms <- function(proj_data, bin_size_Tpref = 1, bin_size_Tavoid_upper
 }
 
 
-# Example usage
-# plot_histograms(glasgow_results, bin_size_distance = 50000, bin_size_shuttles = 500, nr_sd = 1.5, iqr_multiplier = 1, id_col = "id")
-
-#### tests ####
-
-calc_Tpref(data, method = "median")
-calc_gravitation(data)
-calc_tot_distance(data)
-Tavoid<-calc_Tavoid(data)
-Tavoid[2] - Tavoid[1]
-calc_extremes(data)
-calc_coreT_variance(data)
-calc_shuttling_frequency(data)
-calc_occupancy_time(data)
-
-rm(data, mastersheet_moorea, metadata_moorea, metadata_test)
-#### Glasgow test ####
+#### Glasgow examples ####
 library(tidyverse)
 
-file <- "C:/GitHub/ShuttleboxR/Glasgow_2011/Fish_33_20_3.txt"
+# import Glasgow metadata
+metadata_glasgow<-read.delim("C:/GitHub/ShuttleboxR/metadata_glasgow.csv")
 
-gg <- read_shuttlesoft(file, metadata_glasgow)
+# import Glasfow single trial
+gg_file <- "C:/GitHub/ShuttleboxR/gg_example.txt"
+gg <- read_shuttlesoft(gg_file, metadata_glasgow)
 gg <- file_prepare(gg)
 gg <- calc_coreT(gg)
 gg <- gg%>%
   mutate(trial_phase = ifelse(dyn_stat == "static", "acclimation", "trial"))
-Tpref_gg <- calc_Tpref(gg, exclude_acclimation = T, print_results = F)
-Tavoid_gg <- calc_Tavoid(gg, exclude_acclimation = T, print_results = F)
+
+
+# Calculate shuttle-box metrics for single trial
+calc_Tpref(gg, exclude_acclimation = T, print_results = F)
+calc_Tavoid(gg, exclude_acclimation = T, print_results = F)
+calc_extremes(gg, exclude_acclimation = T, print_results = F)
 calc_gravitation(gg, exclude_acclimation = T, print_results = F)
+calc_tot_distance(gg, exclude_acclimation = T, print_results = F)
+calc_shuttles(gg, exclude_acclimation = T, print_results = F)
+calc_occupancy(gg, exclude_acclimation = T, print_results = F)
+calc_coreT_variance(gg, exclude_acclimation = T, print_results = F, variance_type = "std_error")
 
+# Inspect single trial
 plot_temperature_gradient(gg)
-plot_T_segmented(gg,Tpref_gg, Tavoid_gg[1], Tavoid_gg[2])
-plot_core_T_histogram(gg, exclude_acclimation = T)
-plot_cumulative_distance(gg)
+plot_T_segmented(gg, exclude_acclimation = T)
+plot_interval(gg, "shuttle", 30)
+plot_coreT_histogram(gg, exclude_acclimation = T)
+plot_distance(gg)
+plot_histogram(gg, column = "velocity", binwidth = 1)
+plot_interval(gg, column = "velocity")
 plot_heatmap(gg, exclude_acclimation = T)
-plot_speed_vs_core_T(gg, exclude_start_minutes = 300)
-plot_speed_histogram(gg, binwidth = 1)
-speed_agg(gg, exclude_start_minutes = 330)
+plot_speed_coreT(gg)
 
-glasgow_read<-read_shuttlesoft_project(metadata_glasgow, "C:/GitHub/ShuttleboxR/Glasgow_2011")
-# pd_glasgow <- compile_project_data(glasgow_read)
-# pd_glasgow<-left_join(pd_glasgow,
-#                      metadata_glasgow%>%
-#                        dplyr::select(file_name, id),
-#                      by = join_by(fileID == file_name))
-# write.csv(pd_glasgow, "C:/GitHub/ShuttleboxR/Glasgow_2011/pd_glasgow.csv")
+# import Glasgow project data (output of compile_project_data)
 pd_glasgow<-read.csv("C:/GitHub/ShuttleboxR/Glasgow_2011/pd_glasgow.csv")
 
-pd_glasgow%>%
-  # filter(!between(max(core_T), 10, 23))%>%
-  ggplot(aes(x=time_h, y = core_T, colour = id))+
-  geom_line()+
-  theme_light()
-
-install.packages("ggokabeito")
 library(ggokabeito)
 
+# Inspect coreT of project dataset
 pd_glasgow %>%
   filter(fileID %in% unique(fileID)[1:9])%>%
   ggplot(aes(x=time_h, y = core_T, colour = id))+
@@ -1743,58 +1587,106 @@ pd_glasgow %>%
   labs(title = "Body Core Temperature vs Time",
        x = "Time (h)",
        y = "Body Core Temperature (°C)")
-  
-                       
-  rm(data_list, data_read, glasgow_read, mastersheet_moorea, metadata_test, metadata_moorea, df, moorea_read, moorea_results, pca_results, project_data, qual_col_pals, results, test, test_dat)
 
-# glasgow_results <- compile.project.data(glasgow_read)
-glasgow_results<-read.csv("C:/GitHub/ShuttleboxR/Glasgow_2011/glasgow_results.csv")
-# glasgow_results$t_near_limits <- glasgow_results$t_near_max+glasgow_results$t_near_min
+# import Glasgow results (output of calc_project_results)
+glasgow_results<-read.csv("C:/GitHub/ShuttleboxR/glasgow_results.csv")
 glasgow_results<-left_join(glasgow_results,
-                     metadata_glasgow%>%
-                       dplyr::select(file_name, id),
-                     by = join_by(fileID == file_name))%>%
+                           metadata_glasgow%>%
+                             dplyr::select(file_name, id),
+                           by = join_by(fileID == file_name))%>%
   mutate(t_near_limits = t_near_min + t_near_max)
-  gg_pca<-pca(glasgow_results%>%
+
+# Perform PCA on results dataset
+gg_pca<-pca(glasgow_results%>%
         dplyr::select(-c(core_T_variance, t_near_max, t_near_min, seconds_in_DECR, seconds_in_INCR)),
       id_col = "id")
-  
-  gg_pca$outliers
-  
-  gg_pca$plots$biplot
-plot_histograms(glasgow_results, bin_size_distance = 50000, bin_size_shuttles = 500)
-#### Moorea test ####
-#Working fish
-file <- "C:/GitHub/ShuttleboxR/Moorea_2024/Sys1_20240620_dflavicaudus_gg.d.03.txt"
+gg_pca$outliers
+gg_pca$plots$biplot
+gg_pca$plots$tprefplot
 
-file <- "C:/GitHub/ShuttleboxR/Moorea_2024/Discards/Sys2_20240609_cunipinna_yr.txt"
-mo <- read_shuttlesoft(file, metdat2)
+# Plot frequency distributions of project dataset
+plot_histograms(glasgow_results, bin_size_distance = 50000, bin_size_shuttles = 500, nr_sd = 1.5, iqr_multiplier = 1, id_col = "id")
+
+#### Moorea examples ####
+
+# Metadata
+library(tidyverse)
+
+# import Moorea metadata
+metadata_moorea <- read_csv("C:/GitHub/ShuttleboxR/metadata_moorea.csv")
+
+# Working example
+mo_file <- "C:/GitHub/ShuttleboxR/Moorea_2024/Sys1_20240620_dflavicaudus_gg.d.03.txt"
+
+# Misbehaving example
+# mo_file <- "C:/GitHub/ShuttleboxR/Moorea_2024/Sys1_20240613_parcatus_rr.txt"
+
+#Import Moorea single trial example
+mo <- read_shuttlesoft(mo_file, metadata_moorea)
 mo <- file_prepare(mo)
 mo <- calc_coreT(mo)
-Tpref_mo <- calc_Tpref(mo, exclude_acclimation = T, print_results = F)
-Tavoid_mo <- calc_Tavoid(mo, exclude_acclimation = T, print_results = F)
 
+calc_Tpref(mo, exclude_acclimation = T, print_results = F)
+calc_Tavoid(mo, exclude_acclimation = T, print_results = F)
+calc_extremes(mo, exclude_acclimation = T, print_results = F)
+calc_gravitation(mo, exclude_acclimation = T, print_results = F)
+calc_tot_distance(mo, exclude_acclimation = T, print_results = F)
+calc_shuttles(mo, exclude_acclimation = T, print_results = F)
+calc_occupancy(mo, exclude_acclimation = T, print_results = F)
+calc_coreT_variance(mo, exclude_acclimation = T, print_results = F, variance_type = "std_error")
+
+# Inspect moorea single trial
 plot_temperature_gradient(mo)
-plot_T(mo, Tpref_mo, Tavoid_mo[1], Tavoid_mo[2])
-plot_heatmap(mo)
+plot_T_segmented(mo, exclude_acclimation = T)
+plot_interval(mo, "shuttle", 30)
+plot_coreT_histogram(mo, exclude_acclimation = T)
+plot_distance(mo)
+plot_histogram(mo, column = "velocity", binwidth = 1)
+plot_interval(mo, column = "velocity")
+plot_heatmap(mo, exclude_acclimation = T)
+plot_speed_coreT(mo)
 
-moorea_read <- read_shuttlesoft_project(metdat2, "C:/GitHub/ShuttleboxR/Moorea_2024")
-# moorea_results <- compile.project.data(moorea_read)
-# write.csv(moorea_results, "C:/GitHub/ShuttleboxR/Moorea_2024/moorea_results.csv")
-moorea_results <- read.csv("C:/GitHub/ShuttleboxR/Moorea_2024/moorea_results.csv")
-moorea_results<-moorea_results%>%
-  left_join(metdat2%>%
-              dplyr::select(file_name, id),
-            by = join_by(fileID == file_name))
+# Import project dataset (output of compile_project_data)
+pd_moorea<-read.csv("C:/GitHub/ShuttleboxR/pd_moorea.csv")
 
-# pd_moorea<-compile_project_data(moorea_read)
-pd_moorea<-left_join(pd_moorea,
-                        metdat2%>%
-                          dplyr::select(file_name, id),
-                        by = join_by(fileID == file_name))
-write.csv(pd_moorea, "C:/GitHub/ShuttleboxR/Moorea_2024/pd_moorea.csv")
+library(ggokabeito)
 
+# Inspect coreT of project dataset
 pd_moorea%>%
-ggplot(aes(x=time_h, y = core_T, colour = id))+
+  filter(fileID %in% unique(fileID)[1:9])%>%
+  ggplot(aes(x=time_h, y = core_T, colour = id))+
   geom_line()+
-  theme_light()
+  theme_light()+
+  scale_color_okabe_ito()+
+  labs(title = "Body Core Temperature vs Time",
+       x = "Time (h)",
+       y = "Body Core Temperature (°C)")
+
+# Import project results (output of calc_project results)
+moorea_results <- read.csv("C:/GitHub/ShuttleboxR/moorea_results.csv")
+
+mo_pca <- pca(moorea_results%>%
+                dplyr::select(-c(core_T_variance, t_near_max, t_near_min, seconds_in_DECR, seconds_in_INCR)),
+              , id_col = "id")
+
+mo_pca$plots$biplot
+
+plot_histograms(moorea_results, bin_size_distance = 50000, bin_size_shuttles = 500)
+
+
+#### tests ####
+
+Tpref <- calc_Tpref(data, method = "median", exclude_acclimation = T)
+calc_gravitation(data)
+calc_tot_distance(data)
+Tavoid<-calc_Tavoid(data, exclude_acclimation = T)
+Tavoid[2] - Tavoid[1]
+calc_extremes(data)
+calc_coreT_variance(data)
+calc_shuttling_frequency(data)
+calc_occupancy(data)
+
+rm(data, mastersheet_moorea, metadata_moorea, metadata_test)
+
+plot_T_segmented(data, Tpref, Tavoid[1], Tavoid[2])
+plot_interval()
